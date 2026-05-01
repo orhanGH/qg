@@ -1,0 +1,186 @@
+from itertools import combinations_with_replacement
+
+from tf_keras.models import Model
+from tf_keras.layers import Input, Dense, TimeDistributed, Lambda
+from tf_keras.optimizers import Adam
+from tf_keras import backend as K
+
+
+def get_default_config() -> dict:
+    return {
+        "model_name": "mefn",
+        "results_dir_name": "mefn_results",
+
+        "input_dim": 2,
+        "output_dim": 2,
+
+        # MEFN-specific
+        # Keep these small first, because moment features grow very fast.
+        "latent_dim": 8,
+        "moment_order": 2,
+
+        "Phi_sizes": (64, 64),
+        "F_sizes": (64, 64),
+
+        # These can be overwritten by shared_config in main.py
+        "batch_size": 256,
+        "epochs": 5,
+        "patience": 2,
+        "learning_rate": 3e-4,
+        "use_early_stopping": False,
+    }
+
+
+def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, context):
+    """
+    MEFN input:
+        z: (batch, max_particles)
+        p: (batch, max_particles, 2)
+
+    Shared X:
+        X[..., 0] = z
+        X[..., 1] = centered_y
+        X[..., 2] = centered_phi
+    """
+
+    z_train = X[train_idx, :, 0]
+    p_train = X[train_idx, :, 1:3]
+
+    z_val = X[val_idx, :, 0]
+    p_val = X[val_idx, :, 1:3]
+
+    z_test = X[test_idx, :, 0]
+    p_test = X[test_idx, :, 1:3]
+
+    train_inputs = [z_train, p_train]
+    val_inputs = [z_val, p_val]
+    test_inputs = [z_test, p_test]
+
+    extra_info = {
+        "num_particles": X.shape[1],
+    }
+
+    return train_inputs, val_inputs, test_inputs, extra_info
+
+
+def build_model(config: dict, extra_info: dict | None = None):
+    """
+    Simple MEFN:
+        1. Phi network maps particle coordinates p=(y, phi) to latent features.
+        2. Multiply latent features by z.
+        3. Build moment features.
+        4. Classify with F network.
+    """
+
+    num_particles = (
+        extra_info["num_particles"]
+        if extra_info is not None
+        else config["max_particles"]
+    )
+
+    latent_dim = config["latent_dim"]
+    moment_order = config["moment_order"]
+    Phi_sizes = config["Phi_sizes"]
+    F_sizes = config["F_sizes"]
+    output_dim = config.get("output_dim", 2)
+
+    input_z = Input(shape=(num_particles,), name="input_z")
+    input_p = Input(shape=(num_particles, 2), name="input_p")
+
+    # Phi network on particle coordinates
+    phi = input_p
+
+    for i, units in enumerate(Phi_sizes):
+        phi = TimeDistributed(
+            Dense(units, activation="relu"),
+            name=f"phi_dense_{i + 1}",
+        )(phi)
+
+    phi = TimeDistributed(
+        Dense(latent_dim, activation="relu"),
+        name="phi_output",
+    )(phi)
+
+    # Expand z from (batch, particles) to (batch, particles, 1)
+    z_expanded = Lambda(
+        lambda x: K.expand_dims(x, axis=-1),
+        name="expand_z",
+    )(input_z)
+
+    # z-weighted latent particle features
+    weighted_phi = Lambda(
+        lambda tensors: tensors[0] * tensors[1],
+        name="weighted_phi",
+    )([z_expanded, phi])
+
+    pooled_features = []
+
+    # First moment: sum_i z_i * Phi(p_i)
+    first_moment = Lambda(
+        lambda x: K.sum(x, axis=1),
+        name="moment_1",
+    )(weighted_phi)
+
+    pooled_features.append(first_moment)
+
+    # Higher-order moments
+    if moment_order >= 2:
+        for order in range(2, moment_order + 1):
+            combos = list(combinations_with_replacement(range(latent_dim), order))
+
+            def make_moment_layer(combos_for_order):
+                def moment_fn(x):
+                    moments = []
+
+                    for combo in combos_for_order:
+                        term = x[:, :, combo[0]]
+
+                        for idx in combo[1:]:
+                            term = term * x[:, :, idx]
+
+                        term = K.sum(term, axis=1, keepdims=True)
+                        moments.append(term)
+
+                    return K.concatenate(moments, axis=1)
+
+                return moment_fn
+
+            order_moment = Lambda(
+                make_moment_layer(combos),
+                name=f"moment_{order}",
+            )(weighted_phi)
+
+            pooled_features.append(order_moment)
+
+    if len(pooled_features) == 1:
+        x = pooled_features[0]
+    else:
+        x = Lambda(
+            lambda tensors: K.concatenate(tensors, axis=1),
+            name="moment_concat",
+        )(pooled_features)
+
+    # F classifier network
+    for i, units in enumerate(F_sizes):
+        x = Dense(units, activation="relu", name=f"F_dense_{i + 1}")(x)
+
+    output = Dense(output_dim, activation="softmax", name="output")(x)
+
+    model = Model(inputs=[input_z, input_p], outputs=output)
+
+    model.compile(
+        optimizer=Adam(learning_rate=config["learning_rate"]),
+        loss="categorical_crossentropy",
+        metrics=["accuracy"],
+    )
+
+    return model
+
+
+def get_model_summary_fields(config: dict) -> dict:
+    return {
+        "latent_dim": config["latent_dim"],
+        "moment_order": config["moment_order"],
+        "Phi_sizes": str(config["Phi_sizes"]),
+        "F_sizes": str(config["F_sizes"]),
+    }
