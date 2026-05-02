@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from transformers import Trainer, TrainingArguments
+from transformers import Trainer, TrainingArguments, EarlyStoppingCallback
 
 from sklearn.metrics import (
     accuracy_score,
@@ -136,13 +136,24 @@ def run_one_hf_fold(
         fold_dir=fold_dir,
         config={**config, "seed": fold_seed},
     )
+    
+    callbacks = []
 
+    if config.get("use_early_stopping", False):
+        callbacks.append(
+            EarlyStoppingCallback(
+                early_stopping_patience=config.get("patience", 2),
+                early_stopping_threshold=config.get("early_stopping_threshold", 0.0),
+            )
+        )
+        
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         compute_metrics=compute_metrics,
+        callbacks=callbacks,
     )
 
     print("CUDA available:", torch.cuda.is_available())
@@ -152,6 +163,15 @@ def run_one_hf_fold(
         print("GPU:", torch.cuda.get_device_name(0))
 
     trainer.train()
+
+    epochs_ran = trainer.state.epoch
+    best_metric = trainer.state.best_metric
+    best_checkpoint = trainer.state.best_model_checkpoint
+
+    # Remove early stopping callback before test evaluation.
+    # Otherwise it searches for eval_roc_auc, but test evaluation produces test_roc_auc.
+    if config.get("use_early_stopping", False):
+        trainer.remove_callback(EarlyStoppingCallback)
 
     save_list_of_dicts_csv(
         trainer.state.log_history,
@@ -206,6 +226,9 @@ def run_one_hf_fold(
         "fp": int(fp),
         "fn": int(fn),
         "tp": int(tp),
+        "epochs_ran": float(epochs_ran) if epochs_ran is not None else None,
+        "best_metric": float(best_metric) if best_metric is not None else None,
+        "best_model_checkpoint": best_checkpoint,
     }
 
     row.update(test_metrics)

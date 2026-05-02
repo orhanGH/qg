@@ -19,8 +19,8 @@ def get_default_config() -> dict:
         "latent_dim": 8,
         "moment_order": 2,
 
-        "Phi_sizes": (64, 64),
-        "F_sizes": (64, 64),
+        "Phi_sizes": (100, 100, 128),
+        "F_sizes": (100, 100, 100),
 
         # These can be overwritten by shared_config in main.py
         "batch_size": 256,
@@ -65,11 +65,11 @@ def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, conte
 
 def build_model(config: dict, extra_info: dict | None = None):
     """
-    Simple MEFN:
-        1. Phi network maps particle coordinates p=(y, phi) to latent features.
-        2. Multiply latent features by z.
-        3. Build moment features.
-        4. Classify with F network.
+    Channel-style MEFN:
+        1. Phi maps particle coordinates p=(y, phi) to latent channels.
+        2. Channels are weighted by z.
+        3. First and higher-order channel moments are built.
+        4. The concatenated moment features are classified by F.
     """
 
     num_particles = (
@@ -88,6 +88,7 @@ def build_model(config: dict, extra_info: dict | None = None):
     input_p = Input(shape=(num_particles, 2), name="input_p")
 
     # Phi network on particle coordinates
+    # output shape: (batch, num_particles, latent_dim)
     phi = input_p
 
     for i, units in enumerate(Phi_sizes):
@@ -107,7 +108,7 @@ def build_model(config: dict, extra_info: dict | None = None):
         name="expand_z",
     )(input_z)
 
-    # z-weighted latent particle features
+    # z-weighted latent particle channels
     weighted_phi = Lambda(
         lambda tensors: tensors[0] * tensors[1],
         name="weighted_phi",
@@ -115,7 +116,8 @@ def build_model(config: dict, extra_info: dict | None = None):
 
     pooled_features = []
 
-    # First moment: sum_i z_i * Phi(p_i)
+    # First-order channel moments:
+    # M_a = sum_i z_i * Phi_a(p_i)
     first_moment = Lambda(
         lambda x: K.sum(x, axis=1),
         name="moment_1",
@@ -123,35 +125,38 @@ def build_model(config: dict, extra_info: dict | None = None):
 
     pooled_features.append(first_moment)
 
-    # Higher-order moments
+    # Higher-order channel moments
     if moment_order >= 2:
         for order in range(2, moment_order + 1):
-            combos = list(combinations_with_replacement(range(latent_dim), order))
+            channel_combos = list(
+                combinations_with_replacement(range(latent_dim), order)
+            )
 
-            def make_moment_layer(combos_for_order):
-                def moment_fn(x):
-                    moments = []
+            def make_channel_moment_layer(combos_for_order):
+                def channel_moment_fn(x):
+                    terms = []
 
                     for combo in combos_for_order:
                         term = x[:, :, combo[0]]
 
-                        for idx in combo[1:]:
-                            term = term * x[:, :, idx]
+                        for ch in combo[1:]:
+                            term = term * x[:, :, ch]
 
                         term = K.sum(term, axis=1, keepdims=True)
-                        moments.append(term)
+                        terms.append(term)
 
-                    return K.concatenate(moments, axis=1)
+                    return K.concatenate(terms, axis=1)
 
-                return moment_fn
+                return channel_moment_fn
 
             order_moment = Lambda(
-                make_moment_layer(combos),
+                make_channel_moment_layer(channel_combos),
                 name=f"moment_{order}",
             )(weighted_phi)
 
             pooled_features.append(order_moment)
 
+    # Concatenate all moment orders
     if len(pooled_features) == 1:
         x = pooled_features[0]
     else:

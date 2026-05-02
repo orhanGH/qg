@@ -114,11 +114,13 @@ def main():
         # Shared defaults.
         # Individual model configs may override these if their get_default_config includes them.
         "batch_size": 256,
-        "epochs": 1,
+        "epochs": 50,
         "learning_rate": 3e-4,
         "weight_decay": 1e-5,
-        "use_early_stopping": False,
+        "use_early_stopping": True,
         "patience": 2,
+        "early_stopping_threshold": 1e-4,
+
     }
 
     print("=" * 80)
