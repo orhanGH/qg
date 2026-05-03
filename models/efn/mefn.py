@@ -62,14 +62,16 @@ def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, conte
 
     return train_inputs, val_inputs, test_inputs, extra_info
 
-
 def build_model(config: dict, extra_info: dict | None = None):
     """
     Channel-style MEFN:
         1. Phi maps particle coordinates p=(y, phi) to latent channels.
-        2. Channels are weighted by z.
-        3. First and higher-order channel moments are built.
+        2. Moments are built from Phi channels.
+        3. Each moment is weighted once by z.
         4. The concatenated moment features are classified by F.
+
+    Moment definition:
+        M_{a1...ak} = sum_i z_i * Phi_{a1}(p_i) * ... * Phi_{ak}(p_i)
     """
 
     num_particles = (
@@ -109,6 +111,8 @@ def build_model(config: dict, extra_info: dict | None = None):
     )(input_z)
 
     # z-weighted latent particle channels
+    # Used for the first moment:
+    # M_a = sum_i z_i * Phi_a(p_i)
     weighted_phi = Lambda(
         lambda tensors: tensors[0] * tensors[1],
         name="weighted_phi",
@@ -125,7 +129,8 @@ def build_model(config: dict, extra_info: dict | None = None):
 
     pooled_features.append(first_moment)
 
-    # Higher-order channel moments
+    # Higher-order channel moments:
+    # M_{a1...ak} = sum_i z_i * Phi_{a1}(p_i) * ... * Phi_{ak}(p_i)
     if moment_order >= 2:
         for order in range(2, moment_order + 1):
             channel_combos = list(
@@ -133,16 +138,24 @@ def build_model(config: dict, extra_info: dict | None = None):
             )
 
             def make_channel_moment_layer(combos_for_order):
-                def channel_moment_fn(x):
+                def channel_moment_fn(tensors):
+                    phi_tensor, z_tensor = tensors
                     terms = []
 
                     for combo in combos_for_order:
-                        term = x[:, :, combo[0]]
+                        # Start with Phi_{a1}(p_i)
+                        term = phi_tensor[:, :, combo[0]]
 
+                        # Multiply by Phi_{a2}(p_i), ..., Phi_{ak}(p_i)
                         for ch in combo[1:]:
-                            term = term * x[:, :, ch]
+                            term = term * phi_tensor[:, :, ch]
 
+                        # Weight once by z_i
+                        term = term * z_tensor[:, :, 0]
+
+                        # Sum over particles i
                         term = K.sum(term, axis=1, keepdims=True)
+
                         terms.append(term)
 
                     return K.concatenate(terms, axis=1)
@@ -152,7 +165,7 @@ def build_model(config: dict, extra_info: dict | None = None):
             order_moment = Lambda(
                 make_channel_moment_layer(channel_combos),
                 name=f"moment_{order}",
-            )(weighted_phi)
+            )([phi, z_expanded])
 
             pooled_features.append(order_moment)
 
