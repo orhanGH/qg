@@ -33,19 +33,7 @@ def get_default_config() -> dict:
 
 
 def compute_efp_observables(X: np.ndarray, config: dict) -> np.ndarray:
-    """
-    Compute EFP observables as in the oEFN notebook.
 
-    The notebook used:
-        ef.EFPSet(
-            f'd<={efp_degree}',
-            measure='hadr',
-            beta=1,
-            kappa=1,
-            normed=True,
-            coords='ptyphim'
-        )
-    """
 
     efpset = ef.EFPSet(
         f"d<={config['efp_degree']}",
@@ -60,15 +48,7 @@ def compute_efp_observables(X: np.ndarray, config: dict) -> np.ndarray:
 
 
 def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, context):
-    """
-    oEFN input:
-        z:   (batch, max_particles)
-        p:   (batch, max_particles, 2)
-        obs: (batch, n_pca_components)
 
-    Important:
-        scaler and PCA are fitted only on the training fold.
-    """
 
     if "X_obs" not in context:
         print("Computing EFP observables for oEFN...")
@@ -128,7 +108,7 @@ def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, conte
 
 def build_model(config: dict, extra_info: dict | None = None):
     """
-    Paper-style oEFN from the notebook:
+    Paper-style oEFN 
         EFN branch on particles
         observable branch after latent sum pooling
         dense classifier F on concatenated features
