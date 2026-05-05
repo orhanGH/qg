@@ -36,7 +36,7 @@ def parse_args():
     parser.add_argument(
         "--max-particles",
         type=int,
-        default=30,
+        default=50,
     )
 
     parser.add_argument(
@@ -113,12 +113,12 @@ def main():
 
         # Shared defaults.
         # Individual model configs may override these if their get_default_config includes them.
-        "batch_size": 256,
+        "batch_size": 512,
         "epochs": 50,
         "learning_rate": 3e-4,
         "weight_decay": 1e-5,
         "use_early_stopping": True,
-        "patience": 2,
+        "patience": 10,
         "early_stopping_threshold": 1e-4,
 
     }
