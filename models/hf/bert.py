@@ -9,8 +9,8 @@ class HFBertJetClassifier(nn.Module):
     def __init__(
         self,
         input_dim: int = 3,
-        hidden_dim: int = 64,
-        num_layers: int = 2,
+        hidden_dim: int = 128,
+        num_layers: int = 3,
         num_heads: int = 4,
         num_classes: int = 2,
         max_particles: int = 30,
