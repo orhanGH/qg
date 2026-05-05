@@ -15,9 +15,8 @@ def get_default_config() -> dict:
         "output_dim": 2,
 
         # MEFN-specific
-        # Keep these small first, because moment features grow very fast.
-        "latent_dim": 8,
-        "moment_order": 2,
+        "latent_dim": 16,
+        "moment_order": 3,
 
         "Phi_sizes": (100, 100, 128),
         "F_sizes": (100, 100, 100),
