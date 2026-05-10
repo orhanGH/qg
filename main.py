@@ -10,12 +10,6 @@ from utils import (
     create_fixed_test_cv_splits,
 )
 
-from runners.hf_runner import run_hf_experiment
-from runners.keras_runner import run_keras_experiment
-
-from models.hf import bert, roberta, mamba
-from models.efn import efn, mefn, oefn
-
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -55,6 +49,12 @@ def parse_args():
         "--seed",
         type=int,
         default=42,
+    )
+    
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=5,
     )
 
     return parser.parse_args()
@@ -96,6 +96,42 @@ def save_split_indices(project_root: Path, dev_idx, final_test_idx, folds, share
 
     print(f"Saved split indices to: {split_path}")
 
+def get_hf_runner_and_model(model_name: str):
+    """
+    Import Hugging Face / PyTorch code only when an HF model is requested.
+    This allows the Keras environment to run EFN/MEFN/OEFN without torch.
+    """
+    from runners.hf_runner import run_hf_experiment
+
+    if model_name == "bert":
+        from models.hf import bert as model_module
+    elif model_name == "roberta":
+        from models.hf import roberta as model_module
+    elif model_name == "mamba":
+        from models.hf import mamba as model_module
+    else:
+        raise ValueError(f"Unknown HF model: {model_name}")
+
+    return run_hf_experiment, model_module
+
+
+def get_keras_runner_and_model(model_name: str):
+    """
+    Import TensorFlow/Keras/EnergyFlow code only when a Keras model is requested.
+    This allows the PyTorch environment to run BERT/RoBERTa/Mamba without TensorFlow.
+    """
+    from runners.keras_runner import run_keras_experiment
+
+    if model_name == "efn":
+        from models.efn import efn as model_module
+    elif model_name == "mefn":
+        from models.efn import mefn as model_module
+    elif model_name == "oefn":
+        from models.efn import oefn as model_module
+    else:
+        raise ValueError(f"Unknown Keras model: {model_name}")
+
+    return run_keras_experiment, model_module
 
 def main():
     args = parse_args()
@@ -114,11 +150,11 @@ def main():
         # Shared defaults.
         # Individual model configs may override these if their get_default_config includes them.
         "batch_size": 512,
-        "epochs": 50,
+        "epochs": args.epochs,
         "learning_rate": 3e-4,
         "weight_decay": 1e-5,
         "use_early_stopping": True,
-        "patience": 10,
+        "patience": 30,
         "early_stopping_threshold": 1e-4,
 
     }
@@ -177,17 +213,8 @@ def main():
         shared_config=shared_config,
     )
 
-    hf_model_registry = {
-        "bert": bert,
-        "roberta": roberta,
-        "mamba": mamba,
-    }
-
-    keras_model_registry = {
-        "efn": efn,
-        "mefn": mefn,
-        "oefn": oefn,
-    }
+    hf_model_names = {"bert", "roberta", "mamba"}
+    keras_model_names = {"efn", "mefn", "oefn"}
 
     requested_models = [name.lower() for name in args.models]
 
@@ -198,8 +225,8 @@ def main():
         print(f"Starting model: {model_name.upper()}")
         print("-" * 80)
 
-        if model_name in hf_model_registry:
-            model_module = hf_model_registry[model_name]
+        if model_name in hf_model_names:
+            run_hf_experiment, model_module = get_hf_runner_and_model(model_name)
             model_config = model_module.get_default_config()
 
             run_hf_experiment(
@@ -212,8 +239,8 @@ def main():
                 get_model_summary_fields_fn=model_module.get_model_summary_fields,
             )
 
-        elif model_name in keras_model_registry:
-            model_module = keras_model_registry[model_name]
+        elif model_name in keras_model_names:
+            run_keras_experiment, model_module = get_keras_runner_and_model(model_name)
             model_config = model_module.get_default_config()
 
             run_keras_experiment(
