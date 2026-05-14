@@ -368,8 +368,8 @@ def run_hf_experiment(
     """
 
     config = {}
-    config.update(model_config)
     config.update(shared_config)
+    config.update(model_config)
     set_seed(config["seed"])
 
     # qg/runners/hf_runner.py -> parents[1] is qg/
