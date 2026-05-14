@@ -15,6 +15,7 @@ class HFBertJetClassifier(nn.Module):
         num_classes: int = 2,
         max_particles: int = 30,
         dropout: float = 0.1,
+        activation: str = "gelu",
     ):
         super().__init__()
 
@@ -31,6 +32,7 @@ class HFBertJetClassifier(nn.Module):
             max_position_embeddings=max_particles,
             hidden_dropout_prob=dropout,
             attention_probs_dropout_prob=dropout,
+            hidden_act=activation,
             type_vocab_size=1,
             num_labels=num_classes,
         )
@@ -77,12 +79,11 @@ def get_default_config() -> dict:
     return {
         "model_name": "bert",
         "results_dir_name": "bert_hf_trainer_results",
-
         "hidden_dim": 64,
         "num_layers": 2,
         "num_heads": 4,
         "dropout": 0.1,
-
+        "activation": "gelu",
         "batch_size": 256,
         "epochs": 10,
         "learning_rate": 3e-4,
@@ -99,6 +100,7 @@ def build_model(config: dict):
         num_classes=2,
         max_particles=config["max_particles"],
         dropout=config["dropout"],
+        activation=config.get("activation", "gelu"),
     )
 
 
@@ -108,4 +110,5 @@ def get_model_summary_fields(config: dict) -> dict:
         "num_layers": config["num_layers"],
         "num_heads": config["num_heads"],
         "dropout": config["dropout"],
+        "activation": config.get("activation", "gelu"),
     }
