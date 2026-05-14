@@ -189,6 +189,7 @@ def run_one_keras_fold(
             EarlyStopping(
                 monitor="val_loss",
                 patience=config["patience"],
+                min_delta=config.get("early_stopping_threshold", 0.0),
                 restore_best_weights=True,
                 verbose=1,
             )
@@ -376,15 +377,19 @@ def build_run_summary_row(
         "run_id": run_id,
         "run_path": str(output_dir),
         "model_name": config["model_name"],
-
+    
         "num_data": config["num_data"],
         "max_particles": config["max_particles"],
-
+    
         "batch_size": config["batch_size"],
         "epochs": config["epochs"],
-        "patience": config["patience"],
         "learning_rate": config["learning_rate"],
-
+        "activation": config.get("activation"),
+    
+        "use_early_stopping": config.get("use_early_stopping"),
+        "patience": config.get("patience"),
+        "early_stopping_threshold": config.get("early_stopping_threshold"),
+    
         "num_folds": config["num_folds"],
         "final_test_ratio": config["final_test_ratio"],
         "seed": config["seed"],
