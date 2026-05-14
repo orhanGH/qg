@@ -17,8 +17,8 @@ def parse_args():
     parser.add_argument(
         "--models",
         nargs="+",
-        default=["bert", "roberta", "mamba", "efn", "mefn", "oefn"],
-        help="Models to run. Options: bert roberta mamba efn mefn oefn",
+        default=["bert", "roberta", "mamba", "efn", "mefn", "oefn", "aefn"],
+        help="Models to run. Options: bert roberta mamba efn mefn oefn aefn",
     )
 
     parser.add_argument(
@@ -128,6 +128,8 @@ def get_keras_runner_and_model(model_name: str):
         from models.efn import mefn as model_module
     elif model_name == "oefn":
         from models.efn import oefn as model_module
+    elif model_name == "aefn":
+        from models.efn import aefn as model_module
     else:
         raise ValueError(f"Unknown Keras model: {model_name}")
 
@@ -214,7 +216,7 @@ def main():
     )
 
     hf_model_names = {"bert", "roberta", "mamba"}
-    keras_model_names = {"efn", "mefn", "oefn"}
+    keras_model_names = {"efn", "mefn", "oefn", "aefn"}
 
     requested_models = [name.lower() for name in args.models]
 
