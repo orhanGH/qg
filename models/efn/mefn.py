@@ -22,7 +22,7 @@ def get_default_config() -> dict:
         # Networks
         "Phi_sizes": (100, 100, 128),
         "F_sizes": (100, 100, 100),
-
+        "activation": "relu",
         # Dropout
         "phi_dropout": 0.1,
         "moment_dropout": 0.1,
@@ -208,7 +208,7 @@ def build_model(config: dict, extra_info: dict | None = None):
     F_dropout = config.get("F_dropout", 0.0)
 
     learning_rate = config.get("learning_rate", 3e-4)
-
+    activation = config.get("activation", "relu")
     input_z = Input(
         shape=(num_particles,),
         name="input_z",
@@ -226,7 +226,7 @@ def build_model(config: dict, extra_info: dict | None = None):
 
     for i, units in enumerate(Phi_sizes):
         phi = TimeDistributed(
-            Dense(units, activation="relu"),
+            Dense(units, activation=activation),
             name=f"phi_dense_{i + 1}",
         )(phi)
 
@@ -239,7 +239,7 @@ def build_model(config: dict, extra_info: dict | None = None):
     # Output shape:
     # (batch, num_particles, latent_dim)
     phi = TimeDistributed(
-        Dense(latent_dim, activation="relu"),
+        Dense(latent_dim, activation=activation),
         name="phi_output",
     )(phi)
 
@@ -262,9 +262,9 @@ def build_model(config: dict, extra_info: dict | None = None):
 
     # F classifier network
     for i, units in enumerate(F_sizes):
-        x = Dense(
+        x =Dense(
             units,
-            activation="relu",
+            activation=activation,
             name=f"F_dense_{i + 1}",
         )(x)
 
@@ -299,6 +299,7 @@ def get_model_summary_fields(config: dict) -> dict:
         "latent_dim": config["latent_dim"],
         "moment_order": config["moment_order"],
         "Phi_sizes": str(config["Phi_sizes"]),
+        "activation": config.get("activation", "relu"),
         "phi_dropout": config.get("phi_dropout", 0.0),
         "moment_dropout": config.get("moment_dropout", 0.0),
         "F_sizes": str(config["F_sizes"]),
