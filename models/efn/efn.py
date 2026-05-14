@@ -5,11 +5,13 @@ def get_default_config() -> dict:
     return {
         "model_name": "efn",
         "results_dir_name": "efn_results",
-
         "input_dim": 2,
         "Phi_sizes": (100, 100, 128),
         "F_sizes": (100, 100, 100),
         "output_dim": 2,
+
+        "latent_dropout": 0.1,
+        "F_dropouts": 0.1,
 
         "batch_size": 500,
         "epochs": 50,
@@ -42,18 +44,20 @@ def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, conte
 
 def build_model(config: dict, extra_info: dict | None = None):
     model = EFN(
-        input_dim=config["input_dim"],
-        Phi_sizes=config["Phi_sizes"],
-        F_sizes=config["F_sizes"],
-        output_dim=config["output_dim"],
-        loss="categorical_crossentropy",
-        optimizer="adam",
-        metrics=["accuracy"],
-        summary=False,
+    input_dim=config["input_dim"],
+    Phi_sizes=config["Phi_sizes"],
+    F_sizes=config["F_sizes"],
+    output_dim=config["output_dim"],
+
+    latent_dropout=config.get("latent_dropout", 0.0),
+    F_dropouts=config.get("F_dropouts", 0.0),
+
+    loss="categorical_crossentropy",
+    optimizer="adam",
+    metrics=["accuracy"],
+    summary=False,
     )
-
     return model
-
 
 def get_model_summary_fields(config: dict) -> dict:
     return {
