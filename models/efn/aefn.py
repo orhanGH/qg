@@ -25,7 +25,7 @@ def get_default_config() -> dict:
 
         # EFN-style frontend Phi
         "Phi_sizes": (100, 100, 128),
-
+        "activation": "relu",
         # Dropout in Phi network
         "phi_dropout": 0.1,
 
@@ -124,7 +124,7 @@ def build_model(config: dict, extra_info: dict | None = None):
     F_dropout = config.get("F_dropout", 0.0)
 
     learning_rate = config.get("learning_rate", 1e-3)
-
+    activation = config.get("activation", "relu")
     input_z = Input(shape=(num_particles,), name="input_z")
     input_p = Input(shape=(num_particles, input_dim), name="input_p")
 
@@ -140,7 +140,7 @@ def build_model(config: dict, extra_info: dict | None = None):
 
     for i, units in enumerate(Phi_sizes):
         x = TimeDistributed(
-            Dense(units, activation="relu"),
+            Dense(units, activation=activation),
             name=f"phi_dense_{i + 1}",
         )(x)
 
@@ -151,7 +151,7 @@ def build_model(config: dict, extra_info: dict | None = None):
 
     # Project Phi output to attention dimension.
     x = TimeDistributed(
-        Dense(attention_dim, activation="relu"),
+        Dense(attention_dim, activation=activation),
         name="phi_attention_projection",
     )(x)
 
@@ -179,7 +179,7 @@ def build_model(config: dict, extra_info: dict | None = None):
 
         # Small feed-forward block after attention, transformer-style.
         ff = TimeDistributed(
-            Dense(attention_dim, activation="relu"),
+            Dense(attention_dim, activation=activation),
             name=f"attention_ff_{block_idx + 1}",
         )(x)
 
@@ -217,9 +217,9 @@ def build_model(config: dict, extra_info: dict | None = None):
     y = latent
 
     for i, units in enumerate(F_sizes):
-        y = Dense(
+        y =Dense(
             units,
-            activation="relu",
+            activation=activation,
             name=f"F_dense_{i + 1}",
         )(y)
 
@@ -248,11 +248,11 @@ def build_model(config: dict, extra_info: dict | None = None):
 
     return model
 
-
 def get_model_summary_fields(config: dict) -> dict:
     return {
         "input_dim": config["input_dim"],
         "Phi_sizes": str(config["Phi_sizes"]),
+        "activation": config.get("activation", "relu"),
         "phi_dropout": config.get("phi_dropout", 0.0),
         "attention_dim": config["attention_dim"],
         "num_heads": config["num_heads"],
