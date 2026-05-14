@@ -112,37 +112,48 @@ def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, conte
 
 def build_model(config: dict, extra_info: dict | None = None):
     """
-    Paper-style oEFN 
+    Paper-style oEFN:
         EFN branch on particles
         observable branch after latent sum pooling
         dense classifier F on concatenated features
     """
 
-    num_particles = extra_info["num_particles"] if extra_info is not None else config["max_particles"]
+    num_particles = (
+        extra_info["num_particles"]
+        if extra_info is not None
+        else config["max_particles"]
+    )
+
     num_observables = extra_info["num_observables"]
     activation = config.get("activation", "relu")
+
     input_z = Input(shape=(num_particles,), name="input_z")
     input_p = Input(shape=(num_particles, 2), name="input_p")
     input_obs = Input(shape=(num_observables,), name="input_obs")
 
+    # Phi network on particle coordinates.
     phi = input_p
-    for i, units in enumerate(config["Phi_sizes"]):
-    phi = TimeDistributed(
-        Dense(units, activation=activation),
-        name=f"phi_dense_{i + 1}",
-    )(phi)
-    phi = Dropout(
-        config.get("phi_dropout", 0.0),
-        name=f"phi_dropout_{i + 1}",
-    )(phi)
-    
-    for units in config["Phi_sizes"]:
-        phi = TimeDistributed(Dense(units, activation="relu"))(phi)
 
-    z_expanded = Lambda(lambda x: K.expand_dims(x, axis=-1))(input_z)
+    for i, units in enumerate(config["Phi_sizes"]):
+        phi = TimeDistributed(
+            Dense(units, activation=activation),
+            name=f"phi_dense_{i + 1}",
+        )(phi)
+
+        phi = Dropout(
+            config.get("phi_dropout", 0.0),
+            name=f"phi_dropout_{i + 1}",
+        )(phi)
+
+    # Energy-weighted sum: sum_i z_i Phi(p_i)
+    z_expanded = Lambda(
+        lambda x: K.expand_dims(x, axis=-1),
+        name="expand_z",
+    )(input_z)
 
     weighted_phi = Lambda(
         lambda tensors: tensors[0] * tensors[1],
+        name="energy_weighted_phi",
     )([z_expanded, phi])
 
     latent_summary = Lambda(
@@ -154,13 +165,20 @@ def build_model(config: dict, extra_info: dict | None = None):
         config.get("latent_dropout", 0.0),
         name="latent_dropout",
     )(latent_summary)
-    
+
+    # Concatenate EFN latent representation with EFP/PCA observables.
     x = Concatenate(name="latent_plus_observables")(
         [latent_summary, input_obs]
     )
- 
+
+    # F classifier network.
     for i, units in enumerate(config["F_sizes"]):
-        x = Dense(units, activation=activation, name=f"F_dense_{i + 1}")(x)
+        x = Dense(
+            units,
+            activation=activation,
+            name=f"F_dense_{i + 1}",
+        )(x)
+
         x = Dropout(
             config.get("F_dropout", 0.0),
             name=f"F_dropout_{i + 1}",
@@ -171,11 +189,13 @@ def build_model(config: dict, extra_info: dict | None = None):
     model = Model(
         inputs=[input_z, input_p, input_obs],
         outputs=output,
+        name="oefn",
     )
 
     model.compile(
         optimizer=Adam(learning_rate=config["learning_rate"]),
         loss="categorical_crossentropy",
+        metrics=["accuracy"],
     )
 
     return model
