@@ -418,8 +418,8 @@ def run_keras_experiment(
     get_model_summary_fields_fn,
 ):
     config = {}
-    config.update(model_config)
     config.update(shared_config)
+    config.update(model_config)
 
     set_seed(config["seed"])
 
