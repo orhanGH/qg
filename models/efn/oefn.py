@@ -5,7 +5,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 
 from tf_keras.models import Model
-from tf_keras.layers import Input, Dense, TimeDistributed, Lambda, Concatenate
+from tf_keras.layers import Input, Dense, TimeDistributed, Lambda, Concatenate, Dropout
 from tf_keras.optimizers import Adam
 from tf_keras import backend as K
 
@@ -22,6 +22,10 @@ def get_default_config() -> dict:
         # oEFN architecture from the notebook
         "Phi_sizes": (100, 100, 128),
         "F_sizes": (100, 100, 100),
+
+        "phi_dropout": 0.1,
+        "latent_dropout": 0.1,
+        "F_dropout": 0.1,
 
         # Keras training defaults from the notebook
         "batch_size": 500,
@@ -122,7 +126,16 @@ def build_model(config: dict, extra_info: dict | None = None):
     input_obs = Input(shape=(num_observables,), name="input_obs")
 
     phi = input_p
-
+    for i, units in enumerate(config["Phi_sizes"]):
+    phi = TimeDistributed(
+        Dense(units, activation="relu"),
+        name=f"phi_dense_{i + 1}",
+    )(phi)
+    phi = Dropout(
+        config.get("phi_dropout", 0.0),
+        name=f"phi_dropout_{i + 1}",
+    )(phi)
+    
     for units in config["Phi_sizes"]:
         phi = TimeDistributed(Dense(units, activation="relu"))(phi)
 
@@ -137,12 +150,21 @@ def build_model(config: dict, extra_info: dict | None = None):
         name="latent_summary",
     )(weighted_phi)
 
+    latent_summary = Dropout(
+        config.get("latent_dropout", 0.0),
+        name="latent_dropout",
+    )(latent_summary)
+    
     x = Concatenate(name="latent_plus_observables")(
         [latent_summary, input_obs]
     )
-
-    for units in config["F_sizes"]:
-        x = Dense(units, activation="relu")(x)
+ 
+    for i, units in enumerate(config["F_sizes"]):
+        x = Dense(units, activation="relu", name=f"F_dense_{i + 1}")(x)
+        x = Dropout(
+            config.get("F_dropout", 0.0),
+            name=f"F_dropout_{i + 1}",
+        )(x)
 
     output = Dense(2, activation="softmax", name="output")(x)
 
