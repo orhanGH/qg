@@ -50,12 +50,20 @@ def parse_args():
         type=int,
         default=42,
     )
-    
+
     parser.add_argument(
         "--epochs",
         type=int,
         default=5,
     )
+    parser.add_argument(
+        "--fold",
+        type=int,
+        default=None,
+        help="Run only one fold, 1-based. If not set, run all folds.",
+        )
+
+
 
     return parser.parse_args()
 
@@ -195,7 +203,6 @@ def main():
         final_test_ratio=shared_config["final_test_ratio"],
         seed=shared_config["seed"],
     )
-
     print(f"Development samples: {len(dev_idx)}")
     print(f"Fixed test samples : {len(final_test_idx)}")
 
@@ -206,6 +213,11 @@ def main():
             f"val={len(fold_info['val_idx'])}, "
             f"test={len(fold_info['test_idx'])}"
         )
+    if args.fold is not None:
+        folds = [f for f in folds if f["fold"] == args.fold]
+        if len(folds) != 1:
+            raise ValueError(f"Invalid fold {args.fold}. Must be between 1 and {args.num_folds}.")
+        print(f"Running only fold {args.fold}")
 
     save_split_indices(
         project_root=project_root,
