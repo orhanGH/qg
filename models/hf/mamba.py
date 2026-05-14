@@ -4,6 +4,20 @@ import torch.nn as nn
 from transformers import MambaModel, MambaConfig
 from transformers.modeling_outputs import SequenceClassifierOutput
 
+def get_torch_activation(name: str) -> nn.Module:
+    name = name.lower()
+
+    if name == "relu":
+        return nn.ReLU()
+    if name == "gelu":
+        return nn.GELU()
+    if name == "silu" or name == "swish":
+        return nn.SiLU()
+    if name == "leaky_relu":
+        return nn.LeakyReLU(negative_slope=0.01)
+
+    raise ValueError(f"Unsupported activation: {name}")
+
 class HFMambaJetClassifier(nn.Module):
     """
     Hugging Face Mamba encoder adapted to qg_jets.
@@ -28,24 +42,25 @@ class HFMambaJetClassifier(nn.Module):
         num_classes: int = 2,
         max_particles: int = 30,
         dropout: float = 0.1,
+        activation: str = "silu",
     ):
         super().__init__()
 
         self.input_projection = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
-            nn.SiLU(),
+            get_torch_activation(activation),
             nn.Dropout(dropout),
         )
 
         mamba_config = MambaConfig(
-            vocab_size=4,  # unused because we pass inputs_embeds
+            vocab_size=4,
             hidden_size=hidden_dim,
             state_size=state_size,
             num_hidden_layers=num_layers,
             conv_kernel=conv_kernel,
             expand=expand,
-            hidden_act="silu",
+            hidden_act=activation if activation in {"silu", "gelu", "relu"} else "silu",
             pad_token_id=0,
             bos_token_id=0,
             eos_token_id=0,
@@ -96,20 +111,18 @@ def get_default_config() -> dict:
     return {
         "model_name": "mamba",
         "results_dir_name": "mamba_hf_trainer_results",
-
         "hidden_dim": 64,
         "num_layers": 2,
         "state_size": 16,
         "conv_kernel": 4,
         "expand": 2,
         "dropout": 0.1,
-
+        "activation": "silu",
         "batch_size": 256,
         "epochs": 10,
         "learning_rate": 3e-4,
         "weight_decay": 1e-5,
     }
-
 
 def build_model(config: dict):
     return HFMambaJetClassifier(
@@ -122,8 +135,8 @@ def build_model(config: dict):
         num_classes=2,
         max_particles=config["max_particles"],
         dropout=config["dropout"],
+        activation=config.get("activation", "silu"),
     )
-
 
 def get_model_summary_fields(config: dict) -> dict:
     return {
@@ -133,4 +146,5 @@ def get_model_summary_fields(config: dict) -> dict:
         "conv_kernel": config["conv_kernel"],
         "expand": config["expand"],
         "dropout": config["dropout"],
+        "activation": config.get("activation", "silu"),
     }
