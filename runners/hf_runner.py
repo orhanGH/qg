@@ -65,6 +65,8 @@ def make_training_args(fold_dir: Path, config: dict) -> TrainingArguments:
         "per_device_eval_batch_size": config["batch_size"],
         "learning_rate": config["learning_rate"],
         "weight_decay": config["weight_decay"],
+        "lr_scheduler_type": config.get("lr_scheduler_type", "cosine"),
+        "warmup_ratio": config.get("warmup_ratio", 0.05),
         "logging_strategy": "epoch",
         "save_strategy": "epoch",
         "load_best_model_at_end": True,
@@ -306,18 +308,22 @@ def build_run_summary_row(
         "run_id": run_id,
         "run_path": str(output_dir),
         "model_name": config["model_name"],
-
-        # Dataset / preprocessing
+    
         "num_data": config["num_data"],
         "max_particles": config["max_particles"],
-
-        # Training
+    
         "batch_size": config["batch_size"],
         "epochs": config["epochs"],
         "learning_rate": config["learning_rate"],
         "weight_decay": config["weight_decay"],
-
-        # Fixed holdout + CV
+        "lr_scheduler_type": config.get("lr_scheduler_type"),
+        "warmup_ratio": config.get("warmup_ratio"),
+        "activation": config.get("activation"),
+    
+        "use_early_stopping": config.get("use_early_stopping"),
+        "patience": config.get("patience"),
+        "early_stopping_threshold": config.get("early_stopping_threshold"),
+    
         "num_folds": config["num_folds"],
         "final_test_ratio": config["final_test_ratio"],
         "seed": config["seed"],
