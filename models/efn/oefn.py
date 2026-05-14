@@ -22,7 +22,7 @@ def get_default_config() -> dict:
         # oEFN architecture from the notebook
         "Phi_sizes": (100, 100, 128),
         "F_sizes": (100, 100, 100),
-
+        "activation": "relu",
         "phi_dropout": 0.1,
         "latent_dropout": 0.1,
         "F_dropout": 0.1,
@@ -120,7 +120,7 @@ def build_model(config: dict, extra_info: dict | None = None):
 
     num_particles = extra_info["num_particles"] if extra_info is not None else config["max_particles"]
     num_observables = extra_info["num_observables"]
-
+    activation = config.get("activation", "relu")
     input_z = Input(shape=(num_particles,), name="input_z")
     input_p = Input(shape=(num_particles, 2), name="input_p")
     input_obs = Input(shape=(num_observables,), name="input_obs")
@@ -128,7 +128,7 @@ def build_model(config: dict, extra_info: dict | None = None):
     phi = input_p
     for i, units in enumerate(config["Phi_sizes"]):
     phi = TimeDistributed(
-        Dense(units, activation="relu"),
+        Dense(units, activation=activation),
         name=f"phi_dense_{i + 1}",
     )(phi)
     phi = Dropout(
@@ -160,7 +160,7 @@ def build_model(config: dict, extra_info: dict | None = None):
     )
  
     for i, units in enumerate(config["F_sizes"]):
-        x = Dense(units, activation="relu", name=f"F_dense_{i + 1}")(x)
+        x = Dense(units, activation=activation, name=f"F_dense_{i + 1}")(x)
         x = Dropout(
             config.get("F_dropout", 0.0),
             name=f"F_dropout_{i + 1}",
@@ -187,4 +187,8 @@ def get_model_summary_fields(config: dict) -> dict:
         "n_pca_components": config["n_pca_components"],
         "Phi_sizes": str(config["Phi_sizes"]),
         "F_sizes": str(config["F_sizes"]),
+        "activation": config.get("activation", "relu"),
+        "phi_dropout": config.get("phi_dropout", 0.0),
+        "latent_dropout": config.get("latent_dropout", 0.0),
+        "F_dropout": config.get("F_dropout", 0.0),
     }
