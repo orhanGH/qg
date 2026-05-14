@@ -1,7 +1,7 @@
 from pathlib import Path
 import argparse
 import time
-
+import json
 import numpy as np
 from energyflow.datasets import qg_jets
 
@@ -62,7 +62,12 @@ def parse_args():
         default=None,
         help="Run only one fold, 1-based. If not set, run all folds.",
         )
-
+    parser.add_argument(
+        "--optimized-config",
+        type=str,
+        default=None,
+        help="Path to JSON file containing optimized hyperparameters per model.",
+        )
 
 
     return parser.parse_args()
@@ -158,7 +163,7 @@ def main():
         "final_test_ratio": args.final_test_ratio,
 
         # Shared defaults.
-        # Individual model configs may override these if their get_default_config includes them.
+        # Model configs and optimized configs may override these.
         "batch_size": 512,
         "epochs": args.epochs,
         "learning_rate": 3e-4,
@@ -166,8 +171,23 @@ def main():
         "use_early_stopping": True,
         "patience": 30,
         "early_stopping_threshold": 1e-4,
-
     }
+
+    optimized_configs = {}
+
+    if args.optimized_config is not None:
+        optimized_config_path = Path(args.optimized_config)
+
+        if not optimized_config_path.exists():
+            raise FileNotFoundError(f"Optimized config file not found: {optimized_config_path}")
+
+        with open(optimized_config_path, "r", encoding="utf-8") as f:
+            optimized_configs = json.load(f)
+
+        print("=" * 80)
+        print(f"Loaded optimized config from: {optimized_config_path}")
+        print("Available optimized configs:", list(optimized_configs.keys()))
+        print("=" * 80)
 
     print("=" * 80)
     print("Loading qg_jets dataset")
@@ -203,6 +223,7 @@ def main():
         final_test_ratio=shared_config["final_test_ratio"],
         seed=shared_config["seed"],
     )
+
     print(f"Development samples: {len(dev_idx)}")
     print(f"Fixed test samples : {len(final_test_idx)}")
 
@@ -213,12 +234,8 @@ def main():
             f"val={len(fold_info['val_idx'])}, "
             f"test={len(fold_info['test_idx'])}"
         )
-    if args.fold is not None:
-        folds = [f for f in folds if f["fold"] == args.fold]
-        if len(folds) != 1:
-            raise ValueError(f"Invalid fold {args.fold}. Must be between 1 and {args.num_folds}.")
-        print(f"Running only fold {args.fold}")
 
+    # Save all split indices before optionally selecting one fold.
     save_split_indices(
         project_root=project_root,
         dev_idx=dev_idx,
@@ -226,6 +243,18 @@ def main():
         folds=folds,
         shared_config=shared_config,
     )
+
+    if args.fold is not None:
+        folds = [f for f in folds if f["fold"] == args.fold]
+
+        if len(folds) != 1:
+            raise ValueError(
+                f"Invalid fold {args.fold}. Must be between 1 and {args.num_folds}."
+            )
+
+        print("=" * 80)
+        print(f"Running only fold {args.fold}")
+        print("=" * 80)
 
     hf_model_names = {"bert", "roberta", "mamba"}
     keras_model_names = {"efn", "mefn", "oefn", "aefn"}
@@ -243,6 +272,11 @@ def main():
             run_hf_experiment, model_module = get_hf_runner_and_model(model_name)
             model_config = model_module.get_default_config()
 
+            if model_name in optimized_configs:
+                print(f"Applying optimized config for {model_name}:")
+                print(json.dumps(optimized_configs[model_name], indent=2))
+                model_config.update(optimized_configs[model_name])
+
             run_hf_experiment(
                 X=X,
                 y=y,
@@ -256,6 +290,11 @@ def main():
         elif model_name in keras_model_names:
             run_keras_experiment, model_module = get_keras_runner_and_model(model_name)
             model_config = model_module.get_default_config()
+
+            if model_name in optimized_configs:
+                print(f"Applying optimized config for {model_name}:")
+                print(json.dumps(optimized_configs[model_name], indent=2))
+                model_config.update(optimized_configs[model_name])
 
             run_keras_experiment(
                 X=X,
