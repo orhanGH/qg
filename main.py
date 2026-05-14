@@ -72,6 +72,24 @@ def parse_args():
 
     return parser.parse_args()
 
+def load_optimized_configs(path: str | None) -> dict:
+    if path is None:
+        return {}
+
+    config_path = Path(path)
+
+    if not config_path.exists():
+        raise FileNotFoundError(f"Optimized config file not found: {config_path}")
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        optimized_configs = json.load(f)
+
+    print("=" * 80)
+    print(f"Loaded optimized config from: {config_path}")
+    print("Available optimized models:", list(optimized_configs.keys()))
+    print("=" * 80)
+
+    return optimized_configs
 
 def save_split_indices(project_root: Path, dev_idx, final_test_idx, folds, shared_config):
     """
@@ -172,8 +190,7 @@ def main():
         "patience": 30,
         "early_stopping_threshold": 1e-4,
     }
-
-    optimized_configs = {}
+    optimized_configs = load_optimized_configs(args.optimized_config)
 
     if args.optimized_config is not None:
         optimized_config_path = Path(args.optimized_config)
@@ -271,12 +288,12 @@ def main():
         if model_name in hf_model_names:
             run_hf_experiment, model_module = get_hf_runner_and_model(model_name)
             model_config = model_module.get_default_config()
-
+        
             if model_name in optimized_configs:
                 print(f"Applying optimized config for {model_name}:")
                 print(json.dumps(optimized_configs[model_name], indent=2))
                 model_config.update(optimized_configs[model_name])
-
+        
             run_hf_experiment(
                 X=X,
                 y=y,
@@ -290,12 +307,12 @@ def main():
         elif model_name in keras_model_names:
             run_keras_experiment, model_module = get_keras_runner_and_model(model_name)
             model_config = model_module.get_default_config()
-
+        
             if model_name in optimized_configs:
                 print(f"Applying optimized config for {model_name}:")
                 print(json.dumps(optimized_configs[model_name], indent=2))
                 model_config.update(optimized_configs[model_name])
-
+        
             run_keras_experiment(
                 X=X,
                 y=y,
@@ -306,7 +323,6 @@ def main():
                 prepare_fold_inputs_fn=model_module.prepare_fold_inputs,
                 get_model_summary_fields_fn=model_module.get_model_summary_fields,
             )
-
         else:
             print(f"[WARN] Unknown model name: {model_name}")
             continue
