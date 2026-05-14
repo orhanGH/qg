@@ -28,6 +28,7 @@ class HFRobertaJetClassifier(nn.Module):
         num_classes: int = 2,
         max_particles: int = 30,
         dropout: float = 0.1,
+        activation: str = "gelu",
     ):
         super().__init__()
 
@@ -36,19 +37,15 @@ class HFRobertaJetClassifier(nn.Module):
         self.input_projection = nn.Linear(input_dim, hidden_dim)
 
         roberta_config = RobertaConfig(
-            vocab_size=4,  # unused because we pass inputs_embeds
+            vocab_size=4,
             hidden_size=hidden_dim,
             num_hidden_layers=num_layers,
             num_attention_heads=num_heads,
             intermediate_size=ff_dim,
-
-            # Important for RoBERTa:
-            # RoBERTa position ids are shifted because pad_token_id=1.
-            # Therefore max_particles alone is too small.
             max_position_embeddings=max_particles + 2,
-
             hidden_dropout_prob=dropout,
             attention_probs_dropout_prob=dropout,
+            hidden_act=activation,
             type_vocab_size=1,
             num_labels=num_classes,
             pad_token_id=1,
@@ -105,7 +102,7 @@ def get_default_config() -> dict:
         "num_layers": 2,
         "num_heads": 4,
         "dropout": 0.1,
-
+        "activation": "gelu",
         "batch_size": 256,
         "epochs": 10,
         "learning_rate": 3e-4,
@@ -122,6 +119,7 @@ def build_model(config: dict):
         num_classes=2,
         max_particles=config["max_particles"],
         dropout=config["dropout"],
+        activation=config.get("activation", "gelu"),
     )
 
 
@@ -131,4 +129,5 @@ def get_model_summary_fields(config: dict) -> dict:
         "num_layers": config["num_layers"],
         "num_heads": config["num_heads"],
         "dropout": config["dropout"],
+        "activation": config.get("activation", "gelu"),
     }
