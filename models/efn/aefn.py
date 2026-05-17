@@ -14,6 +14,8 @@ from tf_keras.layers import (
 from tf_keras.optimizers import Adam
 from tf_keras import backend as K
 
+import tensorflow as tf
+
 
 def get_default_config() -> dict:
     return {
@@ -26,10 +28,9 @@ def get_default_config() -> dict:
         # EFN-style frontend Phi
         "Phi_sizes": (100, 100, 128),
         "activation": "relu",
-        # Dropout in Phi network
         "phi_dropout": 0.1,
 
-        # Attention block
+        # Particle attention block
         "attention_dim": 128,
         "num_heads": 4,
         "attention_dropout": 0.1,
@@ -38,7 +39,7 @@ def get_default_config() -> dict:
         # Dropout after energy-weighted latent sum
         "latent_dropout": 0.1,
 
-        # Backend F
+        # Backend F network
         "F_sizes": (100, 100, 100),
         "F_dropout": 0.1,
 
@@ -52,7 +53,7 @@ def get_default_config() -> dict:
 
 def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, context):
     """
-    aEFN input:
+    AEFN input:
 
     z: (batch, max_particles)
     p: (batch, max_particles, 2)
@@ -88,18 +89,23 @@ def build_model(config: dict, extra_info: dict | None = None):
     Attention-based EFN.
 
     Standard EFN structure:
-    Phi(p_i)
-    sum_i z_i Phi(p_i)
-    F(...)
+        Phi(p_i)
+        sum_i z_i Phi(p_i)
+        F(...)
 
-    aEFN structure:
-    Phi(p_i)
-    Attention(Phi(p_1), ..., Phi(p_M))
-    sum_i z_i AttentionPhi_i
-    F(...)
+    AEFN structure:
+        Phi(p_i)
+        Attention(Phi(p_1), ..., Phi(p_M))
+        sum_i z_i AttentionPhi_i
+        F(...)
 
-    This keeps the same input/output interface as the EnergyFlow EFN:
-    inputs = [z, p]
+    Inputs:
+        input_z: (batch, particles)
+        input_p: (batch, particles, 2)
+
+    Padding:
+        padded particles have z = 0.
+        They are masked in attention and removed again by the final z-weighted sum.
     """
 
     num_particles = (
@@ -125,17 +131,44 @@ def build_model(config: dict, extra_info: dict | None = None):
 
     learning_rate = config.get("learning_rate", 1e-3)
     activation = config.get("activation", "relu")
+
+    if attention_dim % num_heads != 0:
+        raise ValueError(
+            f"attention_dim must be divisible by num_heads, "
+            f"but got attention_dim={attention_dim}, num_heads={num_heads}."
+        )
+
     input_z = Input(shape=(num_particles,), name="input_z")
     input_p = Input(shape=(num_particles, input_dim), name="input_p")
 
-    # Mask real particles. Padding particles should have z = 0.
-    # Shape: (batch, particles)
+    # -------------------------------------------------------------------------
+    # Padding mask
+    # -------------------------------------------------------------------------
+    # particle_mask:
+    #   shape: (batch, particles)
+    #   True  = real particle
+    #   False = padded particle
     particle_mask = Lambda(
-        lambda z: K.cast(K.greater(z, 0.0), "bool"),
+        lambda z: tf.cast(tf.greater(z, 0.0), tf.bool),
         name="particle_mask",
     )(input_z)
 
-    # Phi network: applied independently to each particle coordinate p_i.
+    # MultiHeadAttention expects attention_mask broadcastable to:
+    #   (batch, query_particles, key_particles)
+    #
+    # We use a key mask repeated over all query positions:
+    #   shape: (batch, particles, particles)
+    #
+    # This masks padded key/value particles. Padded query outputs are not harmful,
+    # because they are multiplied by z=0 in the energy-weighted sum.
+    attention_mask = Lambda(
+        lambda m: tf.tile(tf.expand_dims(m, axis=1), [1, tf.shape(m)[1], 1]),
+        name="attention_mask",
+    )(particle_mask)
+
+    # -------------------------------------------------------------------------
+    # Phi network: particle-wise frontend
+    # -------------------------------------------------------------------------
     x = input_p
 
     for i, units in enumerate(Phi_sizes):
@@ -160,7 +193,9 @@ def build_model(config: dict, extra_info: dict | None = None):
         name="phi_attention_projection_dropout",
     )(x)
 
-    # Attention blocks over particles.
+    # -------------------------------------------------------------------------
+    # Attention blocks over particles
+    # -------------------------------------------------------------------------
     for block_idx in range(num_attention_blocks):
         attn_out = MultiHeadAttention(
             num_heads=num_heads,
@@ -171,13 +206,13 @@ def build_model(config: dict, extra_info: dict | None = None):
             query=x,
             value=x,
             key=x,
-            attention_mask=particle_mask,
+            attention_mask=attention_mask,
         )
 
         x = Add(name=f"attention_residual_{block_idx + 1}")([x, attn_out])
         x = LayerNormalization(name=f"attention_norm_{block_idx + 1}")(x)
 
-        # Small feed-forward block after attention, transformer-style.
+        # Small transformer-style feed-forward block.
         ff = TimeDistributed(
             Dense(attention_dim, activation=activation),
             name=f"attention_ff_{block_idx + 1}",
@@ -191,10 +226,12 @@ def build_model(config: dict, extra_info: dict | None = None):
         x = Add(name=f"ff_residual_{block_idx + 1}")([x, ff])
         x = LayerNormalization(name=f"ff_norm_{block_idx + 1}")(x)
 
-    # EFN-style energy-weighted sum:
-    # latent = sum_i z_i * x_i
+    # -------------------------------------------------------------------------
+    # EFN-style energy-weighted latent sum:
+    #   latent = sum_i z_i * x_i
+    # -------------------------------------------------------------------------
     z_expanded = Lambda(
-        lambda z: K.expand_dims(z, axis=-1),
+        lambda z: tf.expand_dims(z, axis=-1),
         name="expand_z",
     )(input_z)
 
@@ -213,11 +250,13 @@ def build_model(config: dict, extra_info: dict | None = None):
         name="latent_dropout",
     )(latent)
 
-    # Backend F network.
+    # -------------------------------------------------------------------------
+    # Backend F network
+    # -------------------------------------------------------------------------
     y = latent
 
     for i, units in enumerate(F_sizes):
-        y =Dense(
+        y = Dense(
             units,
             activation=activation,
             name=f"F_dense_{i + 1}",
@@ -247,6 +286,7 @@ def build_model(config: dict, extra_info: dict | None = None):
     )
 
     return model
+
 
 def get_model_summary_fields(config: dict) -> dict:
     return {
