@@ -56,21 +56,23 @@ def parse_args():
         type=int,
         default=5,
     )
+
     parser.add_argument(
         "--fold",
         type=int,
         default=None,
         help="Run only one fold, 1-based. If not set, run all folds.",
-        )
+    )
+
     parser.add_argument(
         "--optimized-config",
         type=str,
         default=None,
         help="Path to JSON file containing optimized hyperparameters per model.",
-        )
-
+    )
 
     return parser.parse_args()
+
 
 def load_optimized_configs(path: str | None) -> dict:
     if path is None:
@@ -86,18 +88,19 @@ def load_optimized_configs(path: str | None) -> dict:
 
     print("=" * 80)
     print(f"Loaded optimized config from: {config_path}")
-    print("Available optimized models:", list(optimized_configs.keys()))
+    print("Available optimized configs:", list(optimized_configs.keys()))
     print("=" * 80)
 
     return optimized_configs
+
 
 def save_split_indices(project_root: Path, dev_idx, final_test_idx, folds, shared_config):
     """
     Saves the split indices used by all models.
 
     This is useful for proving that every model used exactly the same:
-        - 75% development set
-        - 25% fixed test set
+        - development set
+        - fixed test set
         - CV train/validation folds
     """
 
@@ -127,11 +130,13 @@ def save_split_indices(project_root: Path, dev_idx, final_test_idx, folds, share
 
     print(f"Saved split indices to: {split_path}")
 
+
 def get_hf_runner_and_model(model_name: str):
     """
     Import Hugging Face / PyTorch code only when an HF model is requested.
     This allows the Keras environment to run EFN/MEFN/OEFN without torch.
     """
+
     from runners.hf_runner import run_hf_experiment
 
     if model_name == "bert":
@@ -151,6 +156,7 @@ def get_keras_runner_and_model(model_name: str):
     Import TensorFlow/Keras/EnergyFlow code only when a Keras model is requested.
     This allows the PyTorch environment to run BERT/RoBERTa/Mamba without TensorFlow.
     """
+
     from runners.keras_runner import run_keras_experiment
 
     if model_name == "efn":
@@ -166,6 +172,48 @@ def get_keras_runner_and_model(model_name: str):
 
     return run_keras_experiment, model_module
 
+
+def apply_config_overrides(
+    model_name: str,
+    model_config: dict,
+    shared_config: dict,
+    optimized_configs: dict,
+    args,
+) -> dict:
+    """
+    Config priority:
+
+    1. Model default config
+    2. Optimized config
+    3. Command-line/shared settings
+
+    This ensures that command-line arguments like --epochs 500
+    really override the default model config, for example "epochs": 10.
+    """
+
+    if model_name in optimized_configs:
+        print(f"Applying optimized config for {model_name}:")
+        print(json.dumps(optimized_configs[model_name], indent=2))
+        model_config.update(optimized_configs[model_name])
+
+    # Force shared/CLI values to override defaults and optimized configs.
+    model_config["num_data"] = shared_config["num_data"]
+    model_config["max_particles"] = shared_config["max_particles"]
+    model_config["num_folds"] = shared_config["num_folds"]
+    model_config["final_test_ratio"] = shared_config["final_test_ratio"]
+    model_config["seed"] = shared_config["seed"]
+
+    # Important fix:
+    # This makes --epochs 500 override model defaults like "epochs": 10.
+    model_config["epochs"] = args.epochs
+
+    print(f"Final config for {model_name}:")
+    print(json.dumps(model_config, indent=2))
+    print("=" * 80)
+
+    return model_config
+
+
 def main():
     args = parse_args()
 
@@ -173,15 +221,14 @@ def main():
 
     shared_config = {
         "seed": args.seed,
-
         "num_data": args.num_data,
         "max_particles": args.max_particles,
-
         "num_folds": args.num_folds,
         "final_test_ratio": args.final_test_ratio,
 
         # Shared defaults.
-        # Model configs and optimized configs may override these.
+        # These are also copied into model_config after optimized configs,
+        # so command-line arguments can override optimized/default configs.
         "batch_size": 512,
         "epochs": args.epochs,
         "learning_rate": 3e-4,
@@ -190,21 +237,8 @@ def main():
         "patience": 30,
         "early_stopping_threshold": 1e-4,
     }
+
     optimized_configs = load_optimized_configs(args.optimized_config)
-
-    if args.optimized_config is not None:
-        optimized_config_path = Path(args.optimized_config)
-
-        if not optimized_config_path.exists():
-            raise FileNotFoundError(f"Optimized config file not found: {optimized_config_path}")
-
-        with open(optimized_config_path, "r", encoding="utf-8") as f:
-            optimized_configs = json.load(f)
-
-        print("=" * 80)
-        print(f"Loaded optimized config from: {optimized_config_path}")
-        print("Available optimized configs:", list(optimized_configs.keys()))
-        print("=" * 80)
 
     print("=" * 80)
     print("Loading qg_jets dataset")
@@ -231,7 +265,7 @@ def main():
     print(f"Processed y shape: {y.shape}")
 
     print("=" * 80)
-    print("Creating one shared 75/25 split and shared CV folds")
+    print("Creating one shared split and shared CV folds")
     print("=" * 80)
 
     dev_idx, final_test_idx, folds = create_fixed_test_cv_splits(
@@ -252,7 +286,6 @@ def main():
             f"test={len(fold_info['test_idx'])}"
         )
 
-    # Save all split indices before optionally selecting one fold.
     save_split_indices(
         project_root=project_root,
         dev_idx=dev_idx,
@@ -287,13 +320,16 @@ def main():
 
         if model_name in hf_model_names:
             run_hf_experiment, model_module = get_hf_runner_and_model(model_name)
+
             model_config = model_module.get_default_config()
-        
-            if model_name in optimized_configs:
-                print(f"Applying optimized config for {model_name}:")
-                print(json.dumps(optimized_configs[model_name], indent=2))
-                model_config.update(optimized_configs[model_name])
-        
+            model_config = apply_config_overrides(
+                model_name=model_name,
+                model_config=model_config,
+                shared_config=shared_config,
+                optimized_configs=optimized_configs,
+                args=args,
+            )
+
             run_hf_experiment(
                 X=X,
                 y=y,
@@ -306,13 +342,16 @@ def main():
 
         elif model_name in keras_model_names:
             run_keras_experiment, model_module = get_keras_runner_and_model(model_name)
+
             model_config = model_module.get_default_config()
-        
-            if model_name in optimized_configs:
-                print(f"Applying optimized config for {model_name}:")
-                print(json.dumps(optimized_configs[model_name], indent=2))
-                model_config.update(optimized_configs[model_name])
-        
+            model_config = apply_config_overrides(
+                model_name=model_name,
+                model_config=model_config,
+                shared_config=shared_config,
+                optimized_configs=optimized_configs,
+                args=args,
+            )
+
             run_keras_experiment(
                 X=X,
                 y=y,
@@ -323,6 +362,7 @@ def main():
                 prepare_fold_inputs_fn=model_module.prepare_fold_inputs,
                 get_model_summary_fields_fn=model_module.get_model_summary_fields,
             )
+
         else:
             print(f"[WARN] Unknown model name: {model_name}")
             continue
