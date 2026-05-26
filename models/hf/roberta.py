@@ -56,6 +56,7 @@ class HFRobertaJetClassifier(nn.Module):
             roberta_config,
             add_pooling_layer=False,
         )
+        remove_position_embeddings(self.roberta)
 
         self.classifier = nn.Linear(hidden_dim, num_classes)
         self.loss_fn = nn.CrossEntropyLoss()
@@ -131,3 +132,14 @@ def get_model_summary_fields(config: dict) -> dict:
         "dropout": config["dropout"],
         "activation": config.get("activation", "gelu"),
     }
+    
+def remove_position_embeddings(model: nn.Module) -> None:
+    """Disable learned absolute positional embeddings.
+
+    This keeps the Hugging Face encoder backend but prevents the model from
+    receiving an artificial particle-position index.
+    """
+    if hasattr(model, "embeddings") and hasattr(model.embeddings, "position_embeddings"):
+        with torch.no_grad():
+            model.embeddings.position_embeddings.weight.zero_()
+        model.embeddings.position_embeddings.weight.requires_grad_(False)
