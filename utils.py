@@ -9,14 +9,6 @@ import random
 
 import numpy as np
 
-from sklearn.metrics import (
-    precision_score,
-    recall_score,
-    f1_score,
-    roc_auc_score,
-    confusion_matrix,
-)
-
 from sklearn.model_selection import train_test_split, StratifiedKFold
 
 
@@ -41,6 +33,99 @@ def set_seed(seed=42):
 
 
 # =============================================================================
+# CSV helpers used by runners
+# =============================================================================
+
+def _to_serializable_value(value):
+    if isinstance(value, np.generic):
+        return value.item()
+
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+
+    if isinstance(value, Path):
+        return str(value)
+
+    if isinstance(value, (list, tuple, dict)):
+        return json.dumps(value)
+
+    return value
+
+
+def save_dict_csv(row, path):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    row = {k: _to_serializable_value(v) for k, v in row.items()}
+
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+        writer.writeheader()
+        writer.writerow(row)
+
+
+def save_list_of_dicts_csv(rows, path):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    rows = list(rows)
+
+    if len(rows) == 0:
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            f.write("")
+        return
+
+    fieldnames = []
+    for row in rows:
+        for key in row.keys():
+            if key not in fieldnames:
+                fieldnames.append(key)
+
+    clean_rows = []
+    for row in rows:
+        clean_rows.append({k: _to_serializable_value(row.get(k, "")) for k in fieldnames})
+
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(clean_rows)
+
+
+def append_dict_csv(row, path):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    row = {k: _to_serializable_value(v) for k, v in row.items()}
+
+    file_exists = path.exists() and path.stat().st_size > 0
+
+    if file_exists:
+        with open(path, "r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            old_fieldnames = reader.fieldnames or []
+            old_rows = list(reader)
+
+        fieldnames = list(old_fieldnames)
+        for key in row.keys():
+            if key not in fieldnames:
+                fieldnames.append(key)
+
+        old_rows.append(row)
+
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for old_row in old_rows:
+                writer.writerow({k: old_row.get(k, "") for k in fieldnames})
+
+    else:
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+            writer.writeheader()
+            writer.writerow(row)
+
+
+# =============================================================================
 # Split utilities
 # =============================================================================
 
@@ -51,11 +136,9 @@ def create_fixed_test_cv_splits(
     seed,
 ):
     """
-    Old jet-level split, kept for compatibility with the original qg_jets code.
-    Do not use this for the final Marvin comparison.
-    Use create_file_level_test_cv_splits instead.
+    Old jet-level split, kept for compatibility.
+    For Marvin comparison, prefer create_file_level_test_cv_splits.
     """
-
     all_idx = np.arange(len(y))
 
     dev_idx, final_test_idx = train_test_split(
@@ -72,7 +155,6 @@ def create_fixed_test_cv_splits(
     )
 
     y_dev = y[dev_idx]
-
     folds = []
 
     for fold, (train_local_idx, val_local_idx) in enumerate(
@@ -108,18 +190,7 @@ def create_file_level_test_cv_splits(
 
     Splits at file level, not jet level.
     All jets from the same .npz file stay together.
-
-    Returned:
-        dev_idx:
-            All development sample indices.
-        final_test_idx:
-            Fixed final test sample indices.
-        folds:
-            List of dicts.
-            Each fold contains train_idx, val_idx, test_idx,
-            and also train_files, val_files, test_files.
     """
-
     y = np.asarray(y)
     file_ids = np.asarray(file_ids)
     file_labels = np.asarray(file_labels)
@@ -152,7 +223,6 @@ def create_file_level_test_cv_splits(
     )
 
     dev_file_labels = file_labels[dev_files]
-
     dev_labels, dev_counts = np.unique(dev_file_labels, return_counts=True)
 
     if np.min(dev_counts) < num_folds:
@@ -220,33 +290,18 @@ def create_file_level_test_cv_splits(
 
 
 def get_split_path(project_root, shared_config):
-    """
-    Build the deterministic path for the split file.
-
-    Important:
-        The filename includes all important settings that change the split.
-        This avoids accidentally reusing the wrong split file.
-    """
-
     project_root = Path(project_root)
 
-    num_data_name = (
-        "all" if shared_config["num_data"] <= 0 else str(shared_config["num_data"])
-    )
+    num_data_name = "all" if shared_config["num_data"] <= 0 else str(shared_config["num_data"])
 
     max_files_per_class = shared_config.get("max_files_per_class", None)
-
-    max_files_name = (
-        "allfiles"
-        if max_files_per_class is None
-        else f"maxfiles_{max_files_per_class}"
-    )
+    max_files_name = "allfiles" if max_files_per_class is None else f"maxfiles_{max_files_per_class}"
 
     split_dir = (
         project_root
         / "splits"
         / (
-            f"marvin_parts_{shared_config['class_0']}_vs_{shared_config['class_1']}"
+            f"marvin_parts_obsvs_{shared_config['class_0']}_vs_{shared_config['class_1']}"
             f"_numdata_{num_data_name}"
             f"_maxp_{shared_config['max_particles']}"
             f"_{max_files_name}"
@@ -271,17 +326,6 @@ def save_split_indices(
     file_paths=None,
     file_labels=None,
 ):
-    """
-    Save split indices to disk.
-
-    This makes sure that later experiments can reuse exactly the same:
-        train_idx
-        val_idx
-        test_idx
-
-    The split is saved as .npz.
-    """
-
     split_path = get_split_path(
         project_root=project_root,
         shared_config=shared_config,
@@ -340,17 +384,6 @@ def save_split_indices(
 
 
 def load_split_indices(project_root, shared_config):
-    """
-    Load split indices from disk if the matching split file exists.
-
-    Returns:
-        None
-            if the split file does not exist.
-
-        dev_idx, final_test_idx, folds
-            if the split file exists.
-    """
-
     split_path = get_split_path(
         project_root=project_root,
         shared_config=shared_config,
@@ -413,13 +446,6 @@ def validate_loaded_splits(
     final_test_idx,
     folds,
 ):
-    """
-    Basic sanity checks for loaded split files.
-
-    This protects against accidentally using a split file that does not match
-    the currently loaded dataset.
-    """
-
     n = len(y)
 
     all_indices = [dev_idx, final_test_idx]
@@ -460,9 +486,7 @@ def validate_loaded_splits(
             raise ValueError(f"Fold {fold_info['fold']} has val/test leakage.")
 
         if test_set != final_test_set:
-            raise ValueError(
-                f"Fold {fold_info['fold']} test_idx differs from final_test_idx."
-            )
+            raise ValueError(f"Fold {fold_info['fold']} test_idx differs from final_test_idx.")
 
         if "train_files" in fold_info and "val_files" in fold_info and "test_files" in fold_info:
             train_files = set(np.asarray(fold_info["train_files"]).tolist())
@@ -508,17 +532,6 @@ def get_or_create_file_level_test_cv_splits(
     file_paths=None,
     force_recreate=False,
 ):
-    """
-    Main helper for experiments.
-
-    Logic:
-        1. Check if a matching split file already exists.
-        2. If yes, load it.
-        3. If no, create a new file-level split and save it.
-
-    Use this in main.py instead of calling create_file_level_test_cv_splits directly.
-    """
-
     if not force_recreate:
         loaded = load_split_indices(
             project_root=project_root,
@@ -573,7 +586,6 @@ def delta_phi(phi, center):
     """
     Wrapped delta phi in [-pi, pi].
     """
-
     return (phi - center + np.pi) % (2.0 * np.pi) - np.pi
 
 
@@ -582,7 +594,6 @@ def weighted_phi_center(phi, weights, eps=1e-8):
     pT-weighted circular mean for phi.
     This avoids problems at the -pi / pi boundary.
     """
-
     sin_mean = np.sum(weights * np.sin(phi))
     cos_mean = np.sum(weights * np.cos(phi))
 
@@ -601,7 +612,7 @@ def process_one_marvin_jet(
     eps=1e-8,
 ):
     """
-    Convert one variable-length Marvin jet into a fixed-size token array.
+    Convert one variable-length Marvin jet into fixed-size token array.
 
     Output:
         out.shape = (max_particles, 3)
@@ -613,16 +624,13 @@ def process_one_marvin_jet(
 
     Padded rows are exactly zero.
     """
-
     pt = np.asarray(pt, dtype=np.float32)
     eta = np.asarray(eta, dtype=np.float32)
     phi = np.asarray(phi, dtype=np.float32)
 
     out = np.zeros((max_particles, 3), dtype=np.float32)
 
-    n = len(pt)
-
-    if n == 0:
+    if len(pt) == 0:
         return out
 
     valid = pt > 0
@@ -651,7 +659,6 @@ def process_one_marvin_jet(
         return out
 
     z = pt / total_pt
-
     eta_center = float(np.sum(pt * eta) / total_pt)
     phi_center = weighted_phi_center(phi, pt, eps=eps)
 
@@ -667,6 +674,20 @@ def process_one_marvin_jet(
     return out
 
 
+def _list_marvin_npz_files(data_root, class_name, subdir):
+    root = Path(data_root) / class_name / subdir
+
+    if not root.exists():
+        raise FileNotFoundError(f"Directory not found: {root}")
+
+    files = sorted(root.glob("*.npz"))
+
+    if len(files) == 0:
+        raise FileNotFoundError(f"No .npz files found in: {root}")
+
+    return files
+
+
 def load_marvin_parts_file(
     path,
     max_particles,
@@ -680,14 +701,13 @@ def load_marvin_parts_file(
     Expected arrays:
         pt, eta, phi, mass, offsets, w
 
-    Only pt/eta/phi are used for this first pipeline.
-    mass is ignored because the current models expect 3 features:
+    Only pt/eta/phi are used for the sequence models.
+    Output X has 3 features:
         z, delta_eta, delta_phi
     """
-
     path = Path(path)
 
-    with np.load(path) as f:
+    with np.load(path, allow_pickle=False) as f:
         pt = f["pt"]
         eta = f["eta"]
         phi = f["phi"]
@@ -711,15 +731,59 @@ def load_marvin_parts_file(
                 sort_by_pt=sort_by_pt,
             )
 
+        y_file = np.full(n_jets, label, dtype=np.int64)
+        file_ids_file = np.full(n_jets, file_id, dtype=np.int64)
+
+        if w is not None:
+            w_file = np.asarray(w, dtype=np.float32)
+        else:
+            w_file = None
+
+    return X_file, y_file, file_ids_file, w_file, counts_file
+
+
+def load_marvin_obsvs_file(path, label, file_id):
+    """
+    Load one Marvin observable .npz file.
+
+    Expected arrays:
+        x          (N_jets, 3472)
+        w          (N_jets,)
+        nsubs      (N_jets, 60)
+        eecs       (N_jets, 23)
+        efps       (N_jets, 3389)
+
+    We use x directly because:
+        x = concat(nsubs, eecs, efps)
+    """
+    path = Path(path)
+
+    with np.load(path, allow_pickle=False) as f:
+        if "x" not in f.files:
+            raise KeyError(f"{path} does not contain key 'x'. Available keys: {f.files}")
+
+        X_file = np.asarray(f["x"], dtype=np.float32)
+        w_file = np.asarray(f["w"], dtype=np.float32) if "w" in f.files else None
+
+        if X_file.ndim != 2:
+            raise ValueError(f"Expected obsvs/x to be 2D, got shape {X_file.shape} in {path}")
+
+        n_jets = X_file.shape[0]
+
+        if "nsubs" in f.files and "eecs" in f.files and "efps" in f.files:
+            expected_dim = f["nsubs"].shape[1] + f["eecs"].shape[1] + f["efps"].shape[1]
+
+            if X_file.shape[1] != expected_dim:
+                raise ValueError(
+                    f"Observable dimension mismatch in {path}: "
+                    f"x has {X_file.shape[1]} features, but "
+                    f"nsubs+eecs+efps gives {expected_dim}."
+                )
+
     y_file = np.full(n_jets, label, dtype=np.int64)
     file_ids_file = np.full(n_jets, file_id, dtype=np.int64)
 
-    if w is not None:
-        w_file = np.asarray(w, dtype=np.float32)
-    else:
-        w_file = None
-
-    return X_file, y_file, file_ids_file, w_file, counts_file
+    return X_file, y_file, file_ids_file, w_file
 
 
 def _balanced_keep_indices(y, max_jets, seed=42):
@@ -727,34 +791,35 @@ def _balanced_keep_indices(y, max_jets, seed=42):
     Select up to max_jets with approximately equal numbers per class.
     This avoids accidentally keeping only one class when debugging.
     """
-
-    if max_jets is None or max_jets <= 0 or max_jets >= len(y):
+    if max_jets is None:
         return np.arange(len(y))
 
+    y = np.asarray(y)
     rng = np.random.default_rng(seed)
+
     classes = np.unique(y)
 
     if len(classes) != 2:
-        raise ValueError(f"Expected two classes for balanced selection, got {classes}.")
+        raise ValueError(f"Expected exactly two classes, got {classes}")
 
     per_class = max_jets // 2
-    remainder = max_jets - per_class * 2
+    remainder = max_jets % 2
 
-    keep = []
+    keep_parts = []
 
-    for class_pos, cls in enumerate(classes):
-        idx = np.where(y == cls)[0]
-        rng.shuffle(idx)
+    for idx, cls in enumerate(classes):
+        cls_idx = np.where(y == cls)[0]
+        rng.shuffle(cls_idx)
 
-        n_take = per_class + (1 if class_pos < remainder else 0)
-        n_take = min(n_take, len(idx))
+        n_keep = per_class + (1 if idx < remainder else 0)
+        n_keep = min(n_keep, len(cls_idx))
 
-        keep.append(idx[:n_take])
+        keep_parts.append(cls_idx[:n_keep])
 
-    keep_idx = np.concatenate(keep)
-    keep_idx.sort()
+    keep = np.concatenate(keep_parts)
+    rng.shuffle(keep)
 
-    return keep_idx
+    return keep
 
 
 def load_marvin_parts_dataset(
@@ -765,66 +830,39 @@ def load_marvin_parts_dataset(
     max_jets=None,
     max_files_per_class=None,
     sort_by_pt=True,
+    seed=42,
     return_file_paths=False,
 ):
     """
-    Load Marvin constituent-level dataset from:
+    Load Marvin parts dataset from:
 
         data_root/class_name/parts/*.npz
 
-    Output:
-        X.shape = (N_jets, max_particles, 3)
-
-    Feature convention:
-        X[..., 0] = z = pt_i / sum_j pt_j
-        X[..., 1] = delta_eta
-        X[..., 2] = delta_phi
-
-    Labels:
-        class_0 -> 0
-        class_1 -> 1
+    Returns:
+        X_parts    shape (N_jets, max_particles, 3)
+        y          shape (N_jets,)
+        file_ids   shape (N_jets,)
+        file_labels shape (N_files,)
+        file_paths list[str], optional
     """
-
     data_root = Path(data_root)
 
-    if class_0 == class_1:
-        raise ValueError("class_0 and class_1 must be different.")
-
-    all_X = []
-    all_y = []
-    all_file_ids = []
-    all_counts = []
-
+    X_all = []
+    y_all = []
+    file_ids_all = []
     file_labels = []
     file_paths = []
 
-    classes = [
-        (class_0, 0),
-        (class_1, 1),
-    ]
-
     file_id = 0
 
-    for class_name, label in classes:
-        parts_dir = data_root / class_name / "parts"
-
-        if not parts_dir.exists():
-            raise FileNotFoundError(f"Parts directory not found: {parts_dir}")
-
-        files = sorted(parts_dir.glob("*.npz"))
-
-        if len(files) == 0:
-            raise FileNotFoundError(f"No .npz files found in: {parts_dir}")
+    for label, class_name in [(0, class_0), (1, class_1)]:
+        files = _list_marvin_npz_files(data_root, class_name, "parts")
 
         if max_files_per_class is not None:
             files = files[:max_files_per_class]
 
-        print(f"Class {class_name!r} -> label {label}: {len(files)} files")
-
-        for local_i, path in enumerate(files, start=1):
-            print(f"[{class_name} {local_i}/{len(files)}] Loading {path.name}")
-
-            X_file, y_file, ids_file, w_file, counts_file = load_marvin_parts_file(
+        for path in files:
+            X_file, y_file, file_ids_file, _, _ = load_marvin_parts_file(
                 path=path,
                 max_particles=max_particles,
                 label=label,
@@ -832,67 +870,24 @@ def load_marvin_parts_dataset(
                 sort_by_pt=sort_by_pt,
             )
 
-            all_X.append(X_file)
-            all_y.append(y_file)
-            all_file_ids.append(ids_file)
-            all_counts.append(counts_file)
-
+            X_all.append(X_file)
+            y_all.append(y_file)
+            file_ids_all.append(file_ids_file)
             file_labels.append(label)
             file_paths.append(str(path))
+
             file_id += 1
 
-            print(
-                f"    jets={len(y_file)}, "
-                f"constituents mean={counts_file.mean():.2f}, "
-                f"median={np.median(counts_file):.1f}, "
-                f"max={counts_file.max()}"
-            )
-
-    X = np.concatenate(all_X, axis=0)
-    y = np.concatenate(all_y, axis=0)
-    file_ids = np.concatenate(all_file_ids, axis=0)
-    counts = np.concatenate(all_counts, axis=0)
+    X = np.concatenate(X_all, axis=0)
+    y = np.concatenate(y_all, axis=0)
+    file_ids = np.concatenate(file_ids_all, axis=0)
     file_labels = np.asarray(file_labels, dtype=np.int64)
 
-    if max_jets is not None and max_jets > 0 and max_jets < len(y):
-        keep_idx = _balanced_keep_indices(y, max_jets=max_jets, seed=42)
-
-        X = X[keep_idx]
-        y = y[keep_idx]
-        file_ids = file_ids[keep_idx]
-        counts = counts[keep_idx]
-
-        old_unique = np.unique(file_ids)
-        old_to_new = {old_id: new_id for new_id, old_id in enumerate(old_unique)}
-
-        new_file_ids = np.asarray(
-            [old_to_new[fid] for fid in file_ids],
-            dtype=np.int64,
-        )
-
-        new_file_labels = np.asarray(
-            [file_labels[old_id] for old_id in old_unique],
-            dtype=np.int64,
-        )
-
-        new_file_paths = [file_paths[old_id] for old_id in old_unique]
-
-        file_ids = new_file_ids
-        file_labels = new_file_labels
-        file_paths = new_file_paths
-
-    print("=" * 80)
-    print("Marvin parts summary")
-    print("=" * 80)
-    print(f"X shape       : {X.shape}")
-    print(f"y shape       : {y.shape}")
-    print(f"num files     : {len(file_labels)}")
-    print(f"class counts  : {dict(zip(*np.unique(y, return_counts=True)))}")
-    print(f"counts min    : {counts.min()}")
-    print(f"counts mean   : {counts.mean():.2f}")
-    print(f"counts median : {np.median(counts):.1f}")
-    print(f"counts max    : {counts.max()}")
-    print("=" * 80)
+    if max_jets is not None:
+        keep = _balanced_keep_indices(y, max_jets=max_jets, seed=seed)
+        X = X[keep]
+        y = y[keep]
+        file_ids = file_ids[keep]
 
     if return_file_paths:
         return X, y, file_ids, file_labels, file_paths
@@ -900,155 +895,190 @@ def load_marvin_parts_dataset(
     return X, y, file_ids, file_labels
 
 
-# =============================================================================
-# Old qg_jets preprocessing
-# =============================================================================
-
-def preprocess_jets(
-    X,
-    max_particles=60,
-    sort_by_pt=True,
-    eps=1e-8,
+def load_marvin_obsvs_dataset(
+    data_root,
+    class_0="vac",
+    class_1="rec",
+    max_jets=None,
+    max_files_per_class=None,
+    seed=42,
+    return_file_paths=False,
 ):
     """
-    Old qg_jets preprocessing, kept for compatibility.
+    Load Marvin observable dataset from:
 
-    Input:
-        X.shape = (num_jets, num_particles, num_features)
+        data_root/class_name/obsvs/*.npz
 
-    Raw features:
-        X[..., 0] = pT
-        X[..., 1] = rapidity/y
-        X[..., 2] = phi
-        X[..., 3] = PID, ignored here
-
-    Output:
-        X_proc.shape = (num_jets, max_particles, 3)
+    Returns:
+        X_obsvs    shape (N_jets, 3472)
+        y          shape (N_jets,)
+        file_ids   shape (N_jets,)
+        file_labels shape (N_files,)
+        file_paths list[str], optional
     """
+    data_root = Path(data_root)
 
-    X = X[:, :, :3].astype(np.float32).copy()
+    X_all = []
+    y_all = []
+    file_ids_all = []
+    file_labels = []
+    file_paths = []
 
-    if sort_by_pt:
-        sort_idx = np.argsort(-X[:, :, 0], axis=1)
-        X = np.take_along_axis(X, sort_idx[:, :, None], axis=1)
+    file_id = 0
 
-    num_jets, num_particles, feature_dim = X.shape
+    for label, class_name in [(0, class_0), (1, class_1)]:
+        files = _list_marvin_npz_files(data_root, class_name, "obsvs")
 
-    if num_particles > max_particles:
-        X = X[:, :max_particles, :]
-    elif num_particles < max_particles:
-        padded = np.zeros(
-            (num_jets, max_particles, feature_dim),
-            dtype=np.float32,
-        )
-        padded[:, :num_particles, :] = X
-        X = padded
+        if max_files_per_class is not None:
+            files = files[:max_files_per_class]
 
-    for jet in X:
-        mask = jet[:, 0] > 0
+        for path in files:
+            X_file, y_file, file_ids_file, _ = load_marvin_obsvs_file(
+                path=path,
+                label=label,
+                file_id=file_id,
+            )
 
-        if not np.any(mask):
-            continue
+            X_all.append(X_file)
+            y_all.append(y_file)
+            file_ids_all.append(file_ids_file)
+            file_labels.append(label)
+            file_paths.append(str(path))
 
-        total_pt = jet[:, 0].sum()
+            file_id += 1
 
-        if total_pt <= eps:
-            continue
+    X = np.concatenate(X_all, axis=0)
+    y = np.concatenate(y_all, axis=0)
+    file_ids = np.concatenate(file_ids_all, axis=0)
+    file_labels = np.asarray(file_labels, dtype=np.int64)
 
-        yphi_center = np.average(
-            jet[mask, 1:3],
-            weights=jet[mask, 0],
-            axis=0,
-        )
+    if max_jets is not None:
+        keep = _balanced_keep_indices(y, max_jets=max_jets, seed=seed)
+        X = X[keep]
+        y = y[keep]
+        file_ids = file_ids[keep]
 
-        jet[mask, 1:3] -= yphi_center
-        jet[mask, 0] /= total_pt
-        jet[~mask, :] = 0.0
+    if return_file_paths:
+        return X, y, file_ids, file_labels, file_paths
 
-    return X.astype(np.float32)
-
-
-# =============================================================================
-# Metrics
-# =============================================================================
-
-def compute_binary_classification_metrics(y_true, y_score, threshold=0.5):
-    y_true = np.asarray(y_true).astype(int)
-    y_score = np.asarray(y_score).reshape(-1)
-    y_pred = (y_score >= threshold).astype(int)
-
-    metrics = {
-        "precision": precision_score(y_true, y_pred, zero_division=0),
-        "recall": recall_score(y_true, y_pred, zero_division=0),
-        "f1": f1_score(y_true, y_pred, zero_division=0),
-    }
-
-    try:
-        metrics["roc_auc"] = roc_auc_score(y_true, y_score)
-    except ValueError:
-        metrics["roc_auc"] = np.nan
-
-    try:
-        tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
-        metrics.update({"tn": tn, "fp": fp, "fn": fn, "tp": tp})
-    except ValueError:
-        metrics.update({"tn": np.nan, "fp": np.nan, "fn": np.nan, "tp": np.nan})
-
-    return metrics
+    return X, y, file_ids, file_labels
 
 
-# =============================================================================
-# CSV utilities
-# =============================================================================
+def load_marvin_parts_and_obsvs_dataset(
+    data_root,
+    class_0="vac",
+    class_1="rec",
+    max_particles=128,
+    max_jets=None,
+    max_files_per_class=None,
+    sort_by_pt=True,
+    seed=42,
+    return_file_paths=True,
+):
+    """
+    Load both Marvin parts and observable data.
 
-def save_dict_csv(data, path):
-    path = Path(path)
-    path.parent.mkdir(exist_ok=True, parents=True)
+    parts:
+        data_root/class_name/parts/*.npz
 
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["key", "value"])
+    obsvs:
+        data_root/class_name/obsvs/*.npz
 
-        for key, value in data.items():
-            writer.writerow([key, value])
+    Files are matched by filename, e.g.
+        parts/dijet_rec_0002.npz
+        obsvs/dijet_rec_0002.npz
 
+    Returns:
+        X_parts     shape (N_jets, max_particles, 3)
+        X_obsvs     shape (N_jets, 3472)
+        y           shape (N_jets,)
+        file_ids    shape (N_jets,)
+        file_labels shape (N_files,)
+        file_paths  list[str]
+        obsvs_paths list[str]
+    """
+    data_root = Path(data_root)
 
-def save_list_of_dicts_csv(rows, path):
-    path = Path(path)
-    path.parent.mkdir(exist_ok=True, parents=True)
+    X_parts_all = []
+    X_obsvs_all = []
+    y_all = []
+    file_ids_all = []
+    file_labels = []
+    file_paths = []
+    obsvs_paths = []
 
-    if len(rows) == 0:
-        return
+    file_id = 0
 
-    fieldnames = sorted({key for row in rows for key in row.keys()})
+    for label, class_name in [(0, class_0), (1, class_1)]:
+        parts_files = _list_marvin_npz_files(data_root, class_name, "parts")
+        obsvs_files = _list_marvin_npz_files(data_root, class_name, "obsvs")
 
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
+        obsvs_by_name = {p.name: p for p in obsvs_files}
 
+        if max_files_per_class is not None:
+            parts_files = parts_files[:max_files_per_class]
 
-def append_dict_csv(row, path):
-    path = Path(path)
-    path.parent.mkdir(exist_ok=True, parents=True)
+        for parts_path in parts_files:
+            if parts_path.name not in obsvs_by_name:
+                raise FileNotFoundError(
+                    f"No matching observable file for parts file {parts_path}. "
+                    f"Expected: {data_root / class_name / 'obsvs' / parts_path.name}"
+                )
 
-    existing_rows = []
+            obsvs_path = obsvs_by_name[parts_path.name]
 
-    if path.exists() and path.stat().st_size > 0:
-        with open(path, "r", newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            existing_rows = list(reader)
+            X_parts_file, y_file, file_ids_file, _, _ = load_marvin_parts_file(
+                path=parts_path,
+                max_particles=max_particles,
+                label=label,
+                file_id=file_id,
+                sort_by_pt=sort_by_pt,
+            )
 
-    all_rows = existing_rows + [row]
+            X_obsvs_file, y_obs_file, file_ids_obs_file, _ = load_marvin_obsvs_file(
+                path=obsvs_path,
+                label=label,
+                file_id=file_id,
+            )
 
-    fieldnames = []
+            if X_parts_file.shape[0] != X_obsvs_file.shape[0]:
+                raise ValueError(
+                    f"Jet-count mismatch for file pair:\n"
+                    f"  parts: {parts_path} has {X_parts_file.shape[0]} jets\n"
+                    f"  obsvs: {obsvs_path} has {X_obsvs_file.shape[0]} jets"
+                )
 
-    for current_row in all_rows:
-        for key in current_row.keys():
-            if key not in fieldnames:
-                fieldnames.append(key)
+            if not np.array_equal(y_file, y_obs_file):
+                raise ValueError(f"Label mismatch between {parts_path} and {obsvs_path}")
 
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(all_rows)
+            if not np.array_equal(file_ids_file, file_ids_obs_file):
+                raise ValueError(f"file_id mismatch between {parts_path} and {obsvs_path}")
+
+            X_parts_all.append(X_parts_file)
+            X_obsvs_all.append(X_obsvs_file)
+            y_all.append(y_file)
+            file_ids_all.append(file_ids_file)
+
+            file_labels.append(label)
+            file_paths.append(str(parts_path))
+            obsvs_paths.append(str(obsvs_path))
+
+            file_id += 1
+
+    X_parts = np.concatenate(X_parts_all, axis=0)
+    X_obsvs = np.concatenate(X_obsvs_all, axis=0)
+    y = np.concatenate(y_all, axis=0)
+    file_ids = np.concatenate(file_ids_all, axis=0)
+    file_labels = np.asarray(file_labels, dtype=np.int64)
+
+    if max_jets is not None:
+        keep = _balanced_keep_indices(y, max_jets=max_jets, seed=seed)
+        X_parts = X_parts[keep]
+        X_obsvs = X_obsvs[keep]
+        y = y[keep]
+        file_ids = file_ids[keep]
+
+    if return_file_paths:
+        return X_parts, X_obsvs, y, file_ids, file_labels, file_paths, obsvs_paths
+
+    return X_parts, X_obsvs, y, file_ids, file_labels
