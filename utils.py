@@ -82,6 +82,7 @@ def save_list_of_dicts_csv(rows, path):
                 fieldnames.append(key)
 
     clean_rows = []
+
     for row in rows:
         clean_rows.append({k: _to_serializable_value(row.get(k, "")) for k in fieldnames})
 
@@ -106,6 +107,7 @@ def append_dict_csv(row, path):
             old_rows = list(reader)
 
         fieldnames = list(old_fieldnames)
+
         for key in row.keys():
             if key not in fieldnames:
                 fieldnames.append(key)
@@ -115,6 +117,7 @@ def append_dict_csv(row, path):
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
+
             for old_row in old_rows:
                 writer.writerow({k: old_row.get(k, "") for k in fieldnames})
 
@@ -195,14 +198,16 @@ def create_file_level_test_cv_splits(
     file_ids = np.asarray(file_ids)
     file_labels = np.asarray(file_labels)
 
-    unique_files = np.arange(len(file_labels))
+    unique_file_ids = np.unique(file_ids)
 
-    if len(unique_files) != len(np.unique(file_ids)):
+    if len(file_labels) != len(unique_file_ids):
         raise ValueError(
             "file_labels length must match the number of unique file_ids. "
             f"Got len(file_labels)={len(file_labels)}, "
-            f"unique file_ids={len(np.unique(file_ids))}."
+            f"unique file_ids={len(unique_file_ids)}."
         )
+
+    unique_files = np.arange(len(file_labels))
 
     labels, counts = np.unique(file_labels, return_counts=True)
 
@@ -276,7 +281,7 @@ def create_file_level_test_cv_splits(
         jet_idx = np.where(file_ids == fid)[0]
 
         if len(jet_idx) == 0:
-            continue
+            raise ValueError(f"No jets found for file_id={fid}. This should not happen.")
 
         jet_labels = np.unique(y[jet_idx])
 
@@ -508,7 +513,7 @@ def validate_loaded_splits(
         jet_idx = np.where(file_ids == fid)[0]
 
         if len(jet_idx) == 0:
-            continue
+            raise ValueError(f"No jets found for file_id={fid}. This should not happen.")
 
         jet_labels = np.unique(y[jet_idx])
 
@@ -701,7 +706,7 @@ def load_marvin_parts_file(
     Expected arrays:
         pt, eta, phi, mass, offsets, w
 
-    Only pt/eta/phi are used for the sequence models.
+    Only pt/eta/phi are used for sequence models.
     Output X has 3 features:
         z, delta_eta, delta_phi
     """
@@ -786,40 +791,89 @@ def load_marvin_obsvs_file(path, label, file_id):
     return X_file, y_file, file_ids_file, w_file
 
 
-def _balanced_keep_indices(y, max_jets, seed=42):
+def _select_files_for_max_jets(file_njets, file_labels, max_jets, seed=42):
     """
-    Select up to max_jets with approximately equal numbers per class.
-    This avoids accidentally keeping only one class when debugging.
+    Select complete files, not individual jets.
+
+    This keeps the file-level CV split valid after applying --num-data.
+    The selected number of jets can be slightly larger than max_jets because
+    files are indivisible.
     """
     if max_jets is None:
-        return np.arange(len(y))
+        return np.arange(len(file_njets), dtype=np.int64)
 
-    y = np.asarray(y)
     rng = np.random.default_rng(seed)
 
-    classes = np.unique(y)
+    file_njets = np.asarray(file_njets)
+    file_labels = np.asarray(file_labels)
+
+    classes = np.unique(file_labels)
 
     if len(classes) != 2:
         raise ValueError(f"Expected exactly two classes, got {classes}")
 
-    per_class = max_jets // 2
-    remainder = max_jets % 2
+    target_per_class = max_jets // 2
+    selected_files = []
 
-    keep_parts = []
+    for cls in classes:
+        cls_files = np.where(file_labels == cls)[0]
+        rng.shuffle(cls_files)
 
-    for idx, cls in enumerate(classes):
-        cls_idx = np.where(y == cls)[0]
-        rng.shuffle(cls_idx)
+        total = 0
+        cls_selected = []
 
-        n_keep = per_class + (1 if idx < remainder else 0)
-        n_keep = min(n_keep, len(cls_idx))
+        for fid in cls_files:
+            cls_selected.append(fid)
+            total += int(file_njets[fid])
 
-        keep_parts.append(cls_idx[:n_keep])
+            if total >= target_per_class:
+                break
 
-    keep = np.concatenate(keep_parts)
-    rng.shuffle(keep)
+        selected_files.extend(cls_selected)
 
-    return keep
+    selected_files = np.asarray(sorted(selected_files), dtype=np.int64)
+
+    return selected_files
+
+
+def _filter_to_selected_files(
+    X_parts,
+    X_obsvs,
+    y,
+    file_ids,
+    file_labels,
+    file_paths,
+    obsvs_paths,
+    selected_files,
+):
+    """
+    Keep only selected complete files and remap file_ids to 0..N_selected-1.
+    """
+    selected_files = np.asarray(selected_files, dtype=np.int64)
+
+    keep_mask = np.isin(file_ids, selected_files)
+
+    X_parts = X_parts[keep_mask]
+    X_obsvs = X_obsvs[keep_mask]
+    y = y[keep_mask]
+    old_file_ids = file_ids[keep_mask]
+
+    old_to_new = {old: new for new, old in enumerate(selected_files.tolist())}
+    new_file_ids = np.asarray([old_to_new[int(fid)] for fid in old_file_ids], dtype=np.int64)
+
+    new_file_labels = file_labels[selected_files]
+    new_file_paths = [file_paths[int(fid)] for fid in selected_files]
+    new_obsvs_paths = [obsvs_paths[int(fid)] for fid in selected_files]
+
+    return (
+        X_parts,
+        X_obsvs,
+        y,
+        new_file_ids,
+        new_file_labels,
+        new_file_paths,
+        new_obsvs_paths,
+    )
 
 
 def load_marvin_parts_dataset(
@@ -839,11 +893,11 @@ def load_marvin_parts_dataset(
         data_root/class_name/parts/*.npz
 
     Returns:
-        X_parts    shape (N_jets, max_particles, 3)
-        y          shape (N_jets,)
-        file_ids   shape (N_jets,)
+        X_parts     shape (N_jets, max_particles, 3)
+        y           shape (N_jets,)
+        file_ids    shape (N_jets,)
         file_labels shape (N_files,)
-        file_paths list[str], optional
+        file_paths  list[str], optional
     """
     data_root = Path(data_root)
 
@@ -852,6 +906,7 @@ def load_marvin_parts_dataset(
     file_ids_all = []
     file_labels = []
     file_paths = []
+    file_njets = []
 
     file_id = 0
 
@@ -875,6 +930,7 @@ def load_marvin_parts_dataset(
             file_ids_all.append(file_ids_file)
             file_labels.append(label)
             file_paths.append(str(path))
+            file_njets.append(X_file.shape[0])
 
             file_id += 1
 
@@ -882,12 +938,26 @@ def load_marvin_parts_dataset(
     y = np.concatenate(y_all, axis=0)
     file_ids = np.concatenate(file_ids_all, axis=0)
     file_labels = np.asarray(file_labels, dtype=np.int64)
+    file_njets = np.asarray(file_njets, dtype=np.int64)
 
     if max_jets is not None:
-        keep = _balanced_keep_indices(y, max_jets=max_jets, seed=seed)
-        X = X[keep]
-        y = y[keep]
-        file_ids = file_ids[keep]
+        selected_files = _select_files_for_max_jets(
+            file_njets=file_njets,
+            file_labels=file_labels,
+            max_jets=max_jets,
+            seed=seed,
+        )
+
+        keep_mask = np.isin(file_ids, selected_files)
+        X = X[keep_mask]
+        y = y[keep_mask]
+        old_file_ids = file_ids[keep_mask]
+
+        old_to_new = {old: new for new, old in enumerate(selected_files.tolist())}
+        file_ids = np.asarray([old_to_new[int(fid)] for fid in old_file_ids], dtype=np.int64)
+
+        file_labels = file_labels[selected_files]
+        file_paths = [file_paths[int(fid)] for fid in selected_files]
 
     if return_file_paths:
         return X, y, file_ids, file_labels, file_paths
@@ -910,11 +980,11 @@ def load_marvin_obsvs_dataset(
         data_root/class_name/obsvs/*.npz
 
     Returns:
-        X_obsvs    shape (N_jets, 3472)
-        y          shape (N_jets,)
-        file_ids   shape (N_jets,)
+        X_obsvs     shape (N_jets, 3472)
+        y           shape (N_jets,)
+        file_ids    shape (N_jets,)
         file_labels shape (N_files,)
-        file_paths list[str], optional
+        file_paths  list[str], optional
     """
     data_root = Path(data_root)
 
@@ -923,6 +993,7 @@ def load_marvin_obsvs_dataset(
     file_ids_all = []
     file_labels = []
     file_paths = []
+    file_njets = []
 
     file_id = 0
 
@@ -944,6 +1015,7 @@ def load_marvin_obsvs_dataset(
             file_ids_all.append(file_ids_file)
             file_labels.append(label)
             file_paths.append(str(path))
+            file_njets.append(X_file.shape[0])
 
             file_id += 1
 
@@ -951,12 +1023,26 @@ def load_marvin_obsvs_dataset(
     y = np.concatenate(y_all, axis=0)
     file_ids = np.concatenate(file_ids_all, axis=0)
     file_labels = np.asarray(file_labels, dtype=np.int64)
+    file_njets = np.asarray(file_njets, dtype=np.int64)
 
     if max_jets is not None:
-        keep = _balanced_keep_indices(y, max_jets=max_jets, seed=seed)
-        X = X[keep]
-        y = y[keep]
-        file_ids = file_ids[keep]
+        selected_files = _select_files_for_max_jets(
+            file_njets=file_njets,
+            file_labels=file_labels,
+            max_jets=max_jets,
+            seed=seed,
+        )
+
+        keep_mask = np.isin(file_ids, selected_files)
+        X = X[keep_mask]
+        y = y[keep_mask]
+        old_file_ids = file_ids[keep_mask]
+
+        old_to_new = {old: new for new, old in enumerate(selected_files.tolist())}
+        file_ids = np.asarray([old_to_new[int(fid)] for fid in old_file_ids], dtype=np.int64)
+
+        file_labels = file_labels[selected_files]
+        file_paths = [file_paths[int(fid)] for fid in selected_files]
 
     if return_file_paths:
         return X, y, file_ids, file_labels, file_paths
@@ -1006,6 +1092,7 @@ def load_marvin_parts_and_obsvs_dataset(
     file_labels = []
     file_paths = []
     obsvs_paths = []
+    file_njets = []
 
     file_id = 0
 
@@ -1062,6 +1149,7 @@ def load_marvin_parts_and_obsvs_dataset(
             file_labels.append(label)
             file_paths.append(str(parts_path))
             obsvs_paths.append(str(obsvs_path))
+            file_njets.append(X_parts_file.shape[0])
 
             file_id += 1
 
@@ -1069,14 +1157,36 @@ def load_marvin_parts_and_obsvs_dataset(
     X_obsvs = np.concatenate(X_obsvs_all, axis=0)
     y = np.concatenate(y_all, axis=0)
     file_ids = np.concatenate(file_ids_all, axis=0)
+
     file_labels = np.asarray(file_labels, dtype=np.int64)
+    file_njets = np.asarray(file_njets, dtype=np.int64)
 
     if max_jets is not None:
-        keep = _balanced_keep_indices(y, max_jets=max_jets, seed=seed)
-        X_parts = X_parts[keep]
-        X_obsvs = X_obsvs[keep]
-        y = y[keep]
-        file_ids = file_ids[keep]
+        selected_files = _select_files_for_max_jets(
+            file_njets=file_njets,
+            file_labels=file_labels,
+            max_jets=max_jets,
+            seed=seed,
+        )
+
+        (
+            X_parts,
+            X_obsvs,
+            y,
+            file_ids,
+            file_labels,
+            file_paths,
+            obsvs_paths,
+        ) = _filter_to_selected_files(
+            X_parts=X_parts,
+            X_obsvs=X_obsvs,
+            y=y,
+            file_ids=file_ids,
+            file_labels=file_labels,
+            file_paths=file_paths,
+            obsvs_paths=obsvs_paths,
+            selected_files=selected_files,
+        )
 
     if return_file_paths:
         return X_parts, X_obsvs, y, file_ids, file_labels, file_paths, obsvs_paths
