@@ -9,7 +9,7 @@ import json
 import numpy as np
 
 from utils import (
-    create_file_level_test_cv_splits,
+    get_or_create_file_level_test_cv_splits,
     load_marvin_parts_dataset,
 )
 
@@ -284,13 +284,13 @@ def main():
     print("Creating one shared FILE-LEVEL split and shared CV folds")
     print("=" * 80)
 
-    dev_idx, final_test_idx, folds = create_file_level_test_cv_splits(
+    dev_idx, final_test_idx, folds = get_or_create_file_level_test_cv_splits(
+        project_root=project_root,
         y=y,
         file_ids=file_ids,
         file_labels=file_labels,
-        num_folds=shared_config["num_folds"],
-        final_test_ratio=shared_config["final_test_ratio"],
-        seed=shared_config["seed"],
+        shared_config=shared_config,
+        file_paths=file_paths,
     )
 
     print(f"Development samples: {len(dev_idx)}")
