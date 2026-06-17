@@ -10,7 +10,7 @@ import numpy as np
 
 from utils import (
     get_or_create_file_level_test_cv_splits,
-    load_marvin_parts_dataset,
+    load_marvin_parts_and_obsvs_dataset,
 )
 
 
@@ -20,11 +20,8 @@ def parse_args():
     parser.add_argument(
         "--models",
         nargs="+",
-        default=["bert", "roberta", "mamba", "efn", "mefn", "aefn"],
-        help=(
-            "Models to run. Options: bert roberta mamba efn mefn aefn. "
-            "oefn is disabled for this first Marvin parts version."
-        ),
+        default=["bert", "roberta", "mamba", "efn", "mefn", "aefn", "oefn"],
+        help="Models to run. Options: bert roberta mamba efn mefn aefn oefn.",
     )
 
     parser.add_argument(
@@ -61,7 +58,7 @@ def parse_args():
         "--max-files-per-class",
         type=int,
         default=None,
-        help="Optional debug limit for number of .npz parts files per class.",
+        help="Optional debug limit for number of .npz files per class.",
     )
 
     parser.add_argument(
@@ -117,14 +114,12 @@ def save_split_indices(project_root, dev_idx, final_test_idx, folds, shared_conf
     splits_dir = project_root / "splits"
     splits_dir.mkdir(parents=True, exist_ok=True)
 
-    num_data_name = (
-        "all" if shared_config["num_data"] <= 0 else str(shared_config["num_data"])
-    )
+    num_data_name = "all" if shared_config["num_data"] <= 0 else str(shared_config["num_data"])
 
     split_path = (
         splits_dir
         / (
-            f"marvin_parts_{shared_config['class_0']}_vs_{shared_config['class_1']}"
+            f"marvin_parts_obsvs_{shared_config['class_0']}_vs_{shared_config['class_1']}"
             f"_numdata_{num_data_name}_maxp_{shared_config['max_particles']}"
         )
         / (
@@ -179,11 +174,7 @@ def get_keras_runner_and_model(model_name):
     elif model_name == "aefn":
         from models.efn import aefn as model_module
     elif model_name == "oefn":
-        raise ValueError(
-            "oefn is not supported in this first Marvin parts loader. "
-            "Use efn/mefn/aefn/bert/roberta/mamba first. "
-            "Later, oefn should be connected to Marvin obsvs/x."
-        )
+        from models.efn import oefn as model_module
     else:
         raise ValueError(f"Unknown Keras model: {model_name}")
 
@@ -242,7 +233,7 @@ def main():
     optimized_configs = load_optimized_configs(args.optimized_config)
 
     print("=" * 80)
-    print("Loading Marvin parts dataset")
+    print("Loading Marvin parts + observable dataset")
     print("=" * 80)
     print(f"Data root           : {args.data_root}")
     print(f"Label 0             : {args.class_0}")
@@ -253,7 +244,15 @@ def main():
 
     max_jets = None if args.num_data <= 0 else args.num_data
 
-    X, y, file_ids, file_labels, file_paths = load_marvin_parts_dataset(
+    (
+        X_parts,
+        X_obsvs,
+        y,
+        file_ids,
+        file_labels,
+        file_paths,
+        obsvs_paths,
+    ) = load_marvin_parts_and_obsvs_dataset(
         data_root=Path(args.data_root),
         class_0=args.class_0,
         class_1=args.class_1,
@@ -261,6 +260,7 @@ def main():
         max_jets=max_jets,
         max_files_per_class=args.max_files_per_class,
         sort_by_pt=True,
+        seed=args.seed,
         return_file_paths=True,
     )
 
@@ -269,18 +269,24 @@ def main():
     print("=" * 80)
     print("Loaded and preprocessed Marvin dataset")
     print("=" * 80)
-    print(f"X shape          : {X.shape}")
-    print(f"y shape          : {y.shape}")
-    print(f"file_ids shape   : {file_ids.shape}")
-    print(f"num files loaded : {len(file_labels)}")
-    print(f"class counts     : {dict(zip(*np.unique(y, return_counts=True)))}")
-    print(f"X dtype          : {X.dtype}")
-    print("Feature convention:")
-    print("  X[..., 0] = z = pt_i / sum_j pt_j")
-    print("  X[..., 1] = delta_eta")
-    print("  X[..., 2] = delta_phi")
-
+    print(f"X_parts shape       : {X_parts.shape}")
+    print(f"X_obsvs shape       : {X_obsvs.shape}")
+    print(f"y shape             : {y.shape}")
+    print(f"file_ids shape      : {file_ids.shape}")
+    print(f"num files loaded    : {len(file_labels)}")
+    print(f"class counts        : {dict(zip(*np.unique(y, return_counts=True)))}")
+    print(f"X_parts dtype       : {X_parts.dtype}")
+    print(f"X_obsvs dtype       : {X_obsvs.dtype}")
+    print("Parts convention:")
+    print("  X_parts[..., 0] = z = pt_i / sum_j pt_j")
+    print("  X_parts[..., 1] = delta_eta")
+    print("  X_parts[..., 2] = delta_phi")
+    print("Observables convention:")
+    print("  X_obsvs[:, 0:60]    = nsubs")
+    print("  X_obsvs[:, 60:83]   = eecs")
+    print("  X_obsvs[:, 83:3472] = efps")
     print("=" * 80)
+
     print("Creating one shared FILE-LEVEL split and shared CV folds")
     print("=" * 80)
 
@@ -320,7 +326,8 @@ def main():
 
     with open(file_list_path, "w", encoding="utf-8") as f:
         for i, path in enumerate(file_paths):
-            f.write(f"{i}\t{file_labels[i]}\t{path}\n")
+            obs_path = obsvs_paths[i] if i < len(obsvs_paths) else ""
+            f.write(f"{i}\t{file_labels[i]}\tparts={path}\tobsvs={obs_path}\n")
 
     print(f"Saved loaded file list to: {file_list_path}")
 
@@ -328,9 +335,7 @@ def main():
         folds = [f for f in folds if f["fold"] == args.fold]
 
         if len(folds) != 1:
-            raise ValueError(
-                f"Invalid fold {args.fold}. Must be between 1 and {args.num_folds}."
-            )
+            raise ValueError(f"Invalid fold {args.fold}. Must be between 1 and {args.num_folds}.")
 
         print("=" * 80)
         print(f"Running only fold {args.fold}")
@@ -340,12 +345,6 @@ def main():
     keras_model_names = {"efn", "mefn", "aefn", "oefn"}
 
     requested_models = [name.lower() for name in args.models]
-
-    if "oefn" in requested_models:
-        raise ValueError(
-            "You requested oefn, but this first Marvin version only loads parts. "
-            "Please run without oefn for now: --models efn mefn aefn bert roberta mamba"
-        )
 
     for model_name in requested_models:
         start_time = time.perf_counter()
@@ -367,7 +366,7 @@ def main():
             )
 
             run_hf_experiment(
-                X=X,
+                X=X_parts,
                 y=y,
                 folds=folds,
                 shared_config=shared_config,
@@ -388,8 +387,14 @@ def main():
                 args=args,
             )
 
+            X_model = (
+                {"parts": X_parts, "obsvs": X_obsvs}
+                if model_name == "oefn"
+                else X_parts
+            )
+
             run_keras_experiment(
-                X=X,
+                X=X_model,
                 y=y,
                 folds=folds,
                 shared_config=shared_config,
