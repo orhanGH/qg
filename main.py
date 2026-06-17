@@ -1,13 +1,16 @@
+# =============================================================================
+# main.py
+# =============================================================================
+
 from pathlib import Path
 import argparse
 import time
 import json
 import numpy as np
-from energyflow.datasets import qg_jets
 
 from utils import (
-    preprocess_jets,
-    create_fixed_test_cv_splits,
+    create_file_level_test_cv_splits,
+    load_marvin_parts_dataset,
 )
 
 
@@ -17,45 +20,61 @@ def parse_args():
     parser.add_argument(
         "--models",
         nargs="+",
-        default=["bert", "roberta", "mamba", "efn", "mefn", "oefn", "aefn"],
-        help="Models to run. Options: bert roberta mamba efn mefn oefn aefn",
+        default=["bert", "roberta", "mamba", "efn", "mefn", "aefn"],
+        help=(
+            "Models to run. Options: bert roberta mamba efn mefn aefn. "
+            "oefn is disabled for this first Marvin parts version."
+        ),
+    )
+
+    parser.add_argument(
+        "--data-root",
+        type=str,
+        default="/lustre/scratch/data/jdearrud_hpc-jewel/phase4/ptmin50",
+        help="Path to Marvin ptmin50 dataset root.",
+    )
+
+    parser.add_argument(
+        "--class-0",
+        type=str,
+        default="vac",
+        choices=["rec", "vac"],
+        help="Directory name used as label 0.",
+    )
+
+    parser.add_argument(
+        "--class-1",
+        type=str,
+        default="rec",
+        choices=["rec", "vac"],
+        help="Directory name used as label 1.",
     )
 
     parser.add_argument(
         "--num-data",
         type=int,
         default=10000,
+        help="Total number of jets to load. Use -1 to load all available jets.",
+    )
+
+    parser.add_argument(
+        "--max-files-per-class",
+        type=int,
+        default=None,
+        help="Optional debug limit for number of .npz parts files per class.",
     )
 
     parser.add_argument(
         "--max-particles",
         type=int,
-        default=50,
+        default=128,
+        help="Maximum number of constituents per jet after truncation/padding.",
     )
 
-    parser.add_argument(
-        "--num-folds",
-        type=int,
-        default=3,
-    )
-
-    parser.add_argument(
-        "--final-test-ratio",
-        type=float,
-        default=0.25,
-    )
-
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-    )
-
-    parser.add_argument(
-        "--epochs",
-        type=int,
-        default=5,
-    )
+    parser.add_argument("--num-folds", type=int, default=3)
+    parser.add_argument("--final-test-ratio", type=float, default=0.25)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--epochs", type=int, default=5)
 
     parser.add_argument(
         "--fold",
@@ -74,7 +93,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_optimized_configs(path: str | None) -> dict:
+def load_optimized_configs(path):
     if path is None:
         return {}
 
@@ -94,23 +113,25 @@ def load_optimized_configs(path: str | None) -> dict:
     return optimized_configs
 
 
-def save_split_indices(project_root: Path, dev_idx, final_test_idx, folds, shared_config):
-    """
-    Saves the split indices used by all models.
-
-    This is useful for proving that every model used exactly the same:
-        - development set
-        - fixed test set
-        - CV train/validation folds
-    """
-
+def save_split_indices(project_root, dev_idx, final_test_idx, folds, shared_config):
     splits_dir = project_root / "splits"
     splits_dir.mkdir(parents=True, exist_ok=True)
 
+    num_data_name = (
+        "all" if shared_config["num_data"] <= 0 else str(shared_config["num_data"])
+    )
+
     split_path = (
         splits_dir
-        / f"qg_numdata_{shared_config['num_data']}"
-        / f"seed_{shared_config['seed']}_folds_{shared_config['num_folds']}_test_{shared_config['final_test_ratio']}.npz"
+        / (
+            f"marvin_parts_{shared_config['class_0']}_vs_{shared_config['class_1']}"
+            f"_numdata_{num_data_name}_maxp_{shared_config['max_particles']}"
+        )
+        / (
+            f"seed_{shared_config['seed']}"
+            f"_folds_{shared_config['num_folds']}"
+            f"_test_{shared_config['final_test_ratio']}.npz"
+        )
     )
 
     split_path.parent.mkdir(parents=True, exist_ok=True)
@@ -125,18 +146,15 @@ def save_split_indices(project_root: Path, dev_idx, final_test_idx, folds, share
         save_dict[f"fold_{fold}_train_idx"] = fold_info["train_idx"]
         save_dict[f"fold_{fold}_val_idx"] = fold_info["val_idx"]
         save_dict[f"fold_{fold}_test_idx"] = fold_info["test_idx"]
+        save_dict[f"fold_{fold}_train_files"] = fold_info["train_files"]
+        save_dict[f"fold_{fold}_val_files"] = fold_info["val_files"]
+        save_dict[f"fold_{fold}_test_files"] = fold_info["test_files"]
 
     np.savez(split_path, **save_dict)
-
     print(f"Saved split indices to: {split_path}")
 
 
-def get_hf_runner_and_model(model_name: str):
-    """
-    Import Hugging Face / PyTorch code only when an HF model is requested.
-    This allows the Keras environment to run EFN/MEFN/OEFN without torch.
-    """
-
+def get_hf_runner_and_model(model_name):
     from runners.hf_runner import run_hf_experiment
 
     if model_name == "bert":
@@ -151,22 +169,21 @@ def get_hf_runner_and_model(model_name: str):
     return run_hf_experiment, model_module
 
 
-def get_keras_runner_and_model(model_name: str):
-    """
-    Import TensorFlow/Keras/EnergyFlow code only when a Keras model is requested.
-    This allows the PyTorch environment to run BERT/RoBERTa/Mamba without TensorFlow.
-    """
-
+def get_keras_runner_and_model(model_name):
     from runners.keras_runner import run_keras_experiment
 
     if model_name == "efn":
         from models.efn import efn as model_module
     elif model_name == "mefn":
         from models.efn import mefn as model_module
-    elif model_name == "oefn":
-        from models.efn import oefn as model_module
     elif model_name == "aefn":
         from models.efn import aefn as model_module
+    elif model_name == "oefn":
+        raise ValueError(
+            "oefn is not supported in this first Marvin parts loader. "
+            "Use efn/mefn/aefn/bert/roberta/mamba first. "
+            "Later, oefn should be connected to Marvin obsvs/x."
+        )
     else:
         raise ValueError(f"Unknown Keras model: {model_name}")
 
@@ -174,37 +191,22 @@ def get_keras_runner_and_model(model_name: str):
 
 
 def apply_config_overrides(
-    model_name: str,
-    model_config: dict,
-    shared_config: dict,
-    optimized_configs: dict,
+    model_name,
+    model_config,
+    shared_config,
+    optimized_configs,
     args,
-) -> dict:
-    """
-    Config priority:
-
-    1. Model default config
-    2. Optimized config
-    3. Command-line/shared settings
-
-    This ensures that command-line arguments like --epochs 500
-    really override the default model config, for example "epochs": 10.
-    """
-
+):
     if model_name in optimized_configs:
         print(f"Applying optimized config for {model_name}:")
         print(json.dumps(optimized_configs[model_name], indent=2))
         model_config.update(optimized_configs[model_name])
 
-    # Force shared/CLI values to override defaults and optimized configs.
     model_config["num_data"] = shared_config["num_data"]
     model_config["max_particles"] = shared_config["max_particles"]
     model_config["num_folds"] = shared_config["num_folds"]
     model_config["final_test_ratio"] = shared_config["final_test_ratio"]
     model_config["seed"] = shared_config["seed"]
-
-    # Important fix:
-    # This makes --epochs 500 override model defaults like "epochs": 10.
     model_config["epochs"] = args.epochs
 
     print(f"Final config for {model_name}:")
@@ -216,7 +218,6 @@ def apply_config_overrides(
 
 def main():
     args = parse_args()
-
     project_root = Path(__file__).resolve().parent
 
     shared_config = {
@@ -225,10 +226,10 @@ def main():
         "max_particles": args.max_particles,
         "num_folds": args.num_folds,
         "final_test_ratio": args.final_test_ratio,
-
-        # Shared defaults.
-        # These are also copied into model_config after optimized configs,
-        # so command-line arguments can override optimized/default configs.
+        "class_0": args.class_0,
+        "class_1": args.class_1,
+        "data_root": args.data_root,
+        "max_files_per_class": args.max_files_per_class,
         "batch_size": 512,
         "epochs": args.epochs,
         "learning_rate": 3e-4,
@@ -241,35 +242,52 @@ def main():
     optimized_configs = load_optimized_configs(args.optimized_config)
 
     print("=" * 80)
-    print("Loading qg_jets dataset")
+    print("Loading Marvin parts dataset")
     print("=" * 80)
+    print(f"Data root           : {args.data_root}")
+    print(f"Label 0             : {args.class_0}")
+    print(f"Label 1             : {args.class_1}")
+    print(f"num_data            : {args.num_data} (-1 means all)")
+    print(f"max_particles       : {args.max_particles}")
+    print(f"max_files_per_class : {args.max_files_per_class}")
 
-    X_raw, y = qg_jets.load(num_data=shared_config["num_data"])
+    max_jets = None if args.num_data <= 0 else args.num_data
 
-    print(f"Raw X shape: {X_raw.shape}")
-    print(f"Raw y shape: {y.shape}")
-
-    print("=" * 80)
-    print("Preprocessing once for all models")
-    print("=" * 80)
-
-    X = preprocess_jets(
-        X_raw,
-        max_particles=shared_config["max_particles"],
+    X, y, file_ids, file_labels, file_paths = load_marvin_parts_dataset(
+        data_root=Path(args.data_root),
+        class_0=args.class_0,
+        class_1=args.class_1,
+        max_particles=args.max_particles,
+        max_jets=max_jets,
+        max_files_per_class=args.max_files_per_class,
         sort_by_pt=True,
+        return_file_paths=True,
     )
 
     y = y.astype(np.int64)
 
-    print(f"Processed X shape: {X.shape}")
-    print(f"Processed y shape: {y.shape}")
+    print("=" * 80)
+    print("Loaded and preprocessed Marvin dataset")
+    print("=" * 80)
+    print(f"X shape          : {X.shape}")
+    print(f"y shape          : {y.shape}")
+    print(f"file_ids shape   : {file_ids.shape}")
+    print(f"num files loaded : {len(file_labels)}")
+    print(f"class counts     : {dict(zip(*np.unique(y, return_counts=True)))}")
+    print(f"X dtype          : {X.dtype}")
+    print("Feature convention:")
+    print("  X[..., 0] = z = pt_i / sum_j pt_j")
+    print("  X[..., 1] = delta_eta")
+    print("  X[..., 2] = delta_phi")
 
     print("=" * 80)
-    print("Creating one shared split and shared CV folds")
+    print("Creating one shared FILE-LEVEL split and shared CV folds")
     print("=" * 80)
 
-    dev_idx, final_test_idx, folds = create_fixed_test_cv_splits(
+    dev_idx, final_test_idx, folds = create_file_level_test_cv_splits(
         y=y,
+        file_ids=file_ids,
+        file_labels=file_labels,
         num_folds=shared_config["num_folds"],
         final_test_ratio=shared_config["final_test_ratio"],
         seed=shared_config["seed"],
@@ -283,7 +301,10 @@ def main():
             f"Fold {fold_info['fold']}: "
             f"train={len(fold_info['train_idx'])}, "
             f"val={len(fold_info['val_idx'])}, "
-            f"test={len(fold_info['test_idx'])}"
+            f"test={len(fold_info['test_idx'])}, "
+            f"train_files={len(fold_info['train_files'])}, "
+            f"val_files={len(fold_info['val_files'])}, "
+            f"test_files={len(fold_info['test_files'])}"
         )
 
     save_split_indices(
@@ -293,6 +314,15 @@ def main():
         folds=folds,
         shared_config=shared_config,
     )
+
+    file_list_path = project_root / "splits" / "last_marvin_file_list.txt"
+    file_list_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(file_list_path, "w", encoding="utf-8") as f:
+        for i, path in enumerate(file_paths):
+            f.write(f"{i}\t{file_labels[i]}\t{path}\n")
+
+    print(f"Saved loaded file list to: {file_list_path}")
 
     if args.fold is not None:
         folds = [f for f in folds if f["fold"] == args.fold]
@@ -307,9 +337,15 @@ def main():
         print("=" * 80)
 
     hf_model_names = {"bert", "roberta", "mamba"}
-    keras_model_names = {"efn", "mefn", "oefn", "aefn"}
+    keras_model_names = {"efn", "mefn", "aefn", "oefn"}
 
     requested_models = [name.lower() for name in args.models]
+
+    if "oefn" in requested_models:
+        raise ValueError(
+            "You requested oefn, but this first Marvin version only loads parts. "
+            "Please run without oefn for now: --models efn mefn aefn bert roberta mamba"
+        )
 
     for model_name in requested_models:
         start_time = time.perf_counter()
