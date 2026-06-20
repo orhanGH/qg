@@ -10,6 +10,7 @@ import numpy as np
 
 from utils import (
     get_or_create_file_level_test_cv_splits,
+    load_marvin_parts_dataset,
     load_marvin_parts_and_obsvs_dataset,
 )
 
@@ -232,8 +233,16 @@ def main():
 
     optimized_configs = load_optimized_configs(args.optimized_config)
 
+    hf_model_names = {"bert", "roberta", "mamba"}
+    keras_model_names = {"efn", "mefn", "aefn", "oefn"}
+    requested_models = [name.lower() for name in args.models]
+    need_obsvs = "oefn" in requested_models
+
     print("=" * 80)
-    print("Loading Marvin parts + observable dataset")
+    if need_obsvs:
+        print("Loading Marvin parts + observable dataset")
+    else:
+        print("Loading Marvin parts dataset only; observables skipped because oEFN is not requested")
     print("=" * 80)
     print(f"Data root           : {args.data_root}")
     print(f"Label 0             : {args.class_0}")
@@ -244,25 +253,46 @@ def main():
 
     max_jets = None if args.num_data <= 0 else args.num_data
 
-    (
-        X_parts,
-        X_obsvs,
-        y,
-        file_ids,
-        file_labels,
-        file_paths,
-        obsvs_paths,
-    ) = load_marvin_parts_and_obsvs_dataset(
-        data_root=Path(args.data_root),
-        class_0=args.class_0,
-        class_1=args.class_1,
-        max_particles=args.max_particles,
-        max_jets=max_jets,
-        max_files_per_class=args.max_files_per_class,
-        sort_by_pt=True,
-        seed=args.seed,
-        return_file_paths=True,
-    )
+    if need_obsvs:
+        (
+            X_parts,
+            X_obsvs,
+            y,
+            file_ids,
+            file_labels,
+            file_paths,
+            obsvs_paths,
+        ) = load_marvin_parts_and_obsvs_dataset(
+            data_root=Path(args.data_root),
+            class_0=args.class_0,
+            class_1=args.class_1,
+            max_particles=args.max_particles,
+            max_jets=max_jets,
+            max_files_per_class=args.max_files_per_class,
+            sort_by_pt=True,
+            seed=args.seed,
+            return_file_paths=True,
+        )
+    else:
+        (
+            X_parts,
+            y,
+            file_ids,
+            file_labels,
+            file_paths,
+        ) = load_marvin_parts_dataset(
+            data_root=Path(args.data_root),
+            class_0=args.class_0,
+            class_1=args.class_1,
+            max_particles=args.max_particles,
+            max_jets=max_jets,
+            max_files_per_class=args.max_files_per_class,
+            sort_by_pt=True,
+            seed=args.seed,
+            return_file_paths=True,
+        )
+        X_obsvs = None
+        obsvs_paths = [""] * len(file_paths)
 
     y = y.astype(np.int64)
 
@@ -270,21 +300,26 @@ def main():
     print("Loaded and preprocessed Marvin dataset")
     print("=" * 80)
     print(f"X_parts shape       : {X_parts.shape}")
-    print(f"X_obsvs shape       : {X_obsvs.shape}")
+    if X_obsvs is None:
+        print("X_obsvs             : skipped")
+    else:
+        print(f"X_obsvs shape       : {X_obsvs.shape}")
     print(f"y shape             : {y.shape}")
     print(f"file_ids shape      : {file_ids.shape}")
     print(f"num files loaded    : {len(file_labels)}")
     print(f"class counts        : {dict(zip(*np.unique(y, return_counts=True)))}")
     print(f"X_parts dtype       : {X_parts.dtype}")
-    print(f"X_obsvs dtype       : {X_obsvs.dtype}")
+    if X_obsvs is not None:
+        print(f"X_obsvs dtype       : {X_obsvs.dtype}")
     print("Parts convention:")
     print("  X_parts[..., 0] = z = pt_i / sum_j pt_j")
     print("  X_parts[..., 1] = delta_eta")
     print("  X_parts[..., 2] = delta_phi")
-    print("Observables convention:")
-    print("  X_obsvs[:, 0:60]    = nsubs")
-    print("  X_obsvs[:, 60:83]   = eecs")
-    print("  X_obsvs[:, 83:3472] = efps")
+    if X_obsvs is not None:
+        print("Observables convention:")
+        print("  X_obsvs[:, 0:60]    = nsubs")
+        print("  X_obsvs[:, 60:83]   = eecs")
+        print("  X_obsvs[:, 83:3472] = efps")
     print("=" * 80)
 
     print("Creating one shared FILE-LEVEL split and shared CV folds")
@@ -341,11 +376,6 @@ def main():
         print(f"Running only fold {args.fold}")
         print("=" * 80)
 
-    hf_model_names = {"bert", "roberta", "mamba"}
-    keras_model_names = {"efn", "mefn", "aefn", "oefn"}
-
-    requested_models = [name.lower() for name in args.models]
-
     for model_name in requested_models:
         start_time = time.perf_counter()
 
@@ -386,6 +416,9 @@ def main():
                 optimized_configs=optimized_configs,
                 args=args,
             )
+
+            if model_name == "oefn" and X_obsvs is None:
+                raise RuntimeError("oEFN requires observables, but X_obsvs was not loaded.")
 
             X_model = (
                 {"parts": X_parts, "obsvs": X_obsvs}
