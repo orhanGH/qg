@@ -300,7 +300,8 @@ def get_split_path(project_root, shared_config):
     num_data_name = "all" if shared_config["num_data"] <= 0 else str(shared_config["num_data"])
 
     max_files_per_class = shared_config.get("max_files_per_class", None)
-    max_files_name = "allfiles" if max_files_per_class is None else f"maxfiles_{max_files_per_class}"
+    use_all_files = max_files_per_class is None or int(max_files_per_class) <= 0
+    max_files_name = "allfiles" if use_all_files else f"maxfiles_{max_files_per_class}"
 
     split_dir = (
         project_root
@@ -913,7 +914,7 @@ def load_marvin_parts_dataset(
     for label, class_name in [(0, class_0), (1, class_1)]:
         files = _list_marvin_npz_files(data_root, class_name, "parts")
 
-        if max_files_per_class is not None:
+        if max_files_per_class is not None and int(max_files_per_class) > 0:
             files = files[:max_files_per_class]
 
         for path in files:
@@ -1000,7 +1001,7 @@ def load_marvin_obsvs_dataset(
     for label, class_name in [(0, class_0), (1, class_1)]:
         files = _list_marvin_npz_files(data_root, class_name, "obsvs")
 
-        if max_files_per_class is not None:
+        if max_files_per_class is not None and int(max_files_per_class) > 0:
             files = files[:max_files_per_class]
 
         for path in files:
@@ -1102,7 +1103,7 @@ def load_marvin_parts_and_obsvs_dataset(
 
         obsvs_by_name = {p.name: p for p in obsvs_files}
 
-        if max_files_per_class is not None:
+        if max_files_per_class is not None and int(max_files_per_class) > 0:
             parts_files = parts_files[:max_files_per_class]
 
         for parts_path in parts_files:

@@ -15,7 +15,7 @@ class HFBertJetClassifier(nn.Module):
         num_classes: int = 2,
         max_particles: int = 30,
         dropout: float = 0.1,
-        activation: str = "relu",
+        activation: str = "gelu",
     ):
         super().__init__()
 
@@ -84,7 +84,7 @@ def get_default_config() -> dict:
         "num_layers": 2,
         "num_heads": 4,
         "dropout": 0.1,
-        "activation": "relu",
+        "activation": "gelu",
         "batch_size": 256,
         "epochs": 10,
         "learning_rate": 3e-4,
@@ -101,7 +101,7 @@ def build_model(config: dict):
         num_classes=2,
         max_particles=config["max_particles"],
         dropout=config["dropout"],
-        activation=config.get("activation", "relu"),
+        activation=config.get("activation", "gelu"),
     )
 
 
@@ -111,7 +111,7 @@ def get_model_summary_fields(config: dict) -> dict:
         "num_layers": config["num_layers"],
         "num_heads": config["num_heads"],
         "dropout": config["dropout"],
-        "activation": config.get("activation", "relu"),
+        "activation": config.get("activation", "gelu"),
     }
     
 def remove_position_embeddings(model: nn.Module) -> None:

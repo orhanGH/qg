@@ -11,7 +11,7 @@ def get_default_config() -> dict:
         "output_dim": 2,
         "latent_dropout": 0.1,
         "F_dropouts": 0.1,
-        "activation": "relu",
+        "activation": "gelu",
         "batch_size": 500,
         "epochs": 50,
         "patience": 2,

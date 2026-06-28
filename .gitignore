@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+*.out
+*.err
+*.pt
+*.pth
+*.npz
+*.zip
+*.tar.gz
+runs/
+logs/
+checkpoints/
+predictions/
+plots/
+outputs/

@@ -1,0 +1,58 @@
+{
+  "efn": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 8,
+    "early_stopping_threshold": 0.0001,
+    "learning_rate": 0.0003,
+    "weight_decay": 1e-05
+  },
+  "mefn": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 8,
+    "early_stopping_threshold": 0.0001,
+    "learning_rate": 0.0003,
+    "weight_decay": 1e-05
+  },
+  "aefn": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 8,
+    "early_stopping_threshold": 0.0001,
+    "learning_rate": 0.0003,
+    "weight_decay": 1e-05
+  },
+  "oefn": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 8,
+    "early_stopping_threshold": 0.0001,
+    "learning_rate": 0.0003,
+    "weight_decay": 1e-05
+  },
+  "bert": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 8,
+    "early_stopping_threshold": 0.0001,
+    "learning_rate": 0.0003,
+    "weight_decay": 1e-05
+  },
+  "roberta": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 8,
+    "early_stopping_threshold": 0.0001,
+    "learning_rate": 0.0003,
+    "weight_decay": 1e-05
+  },
+  "mamba": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 8,
+    "early_stopping_threshold": 0.0001,
+    "learning_rate": 0.0003,
+    "weight_decay": 1e-05
+  }
+}

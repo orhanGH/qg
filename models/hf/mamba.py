@@ -42,7 +42,7 @@ class HFMambaJetClassifier(nn.Module):
         num_classes: int = 2,
         max_particles: int = 30,
         dropout: float = 0.1,
-        activation: str = "silu",
+        activation: str = "gelu",
     ):
         super().__init__()
 
@@ -117,7 +117,7 @@ def get_default_config() -> dict:
         "conv_kernel": 4,
         "expand": 2,
         "dropout": 0.1,
-        "activation": "silu",
+        "activation": "gelu",
         "batch_size": 256,
         "epochs": 10,
         "learning_rate": 3e-4,

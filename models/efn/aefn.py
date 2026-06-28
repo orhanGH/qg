@@ -27,7 +27,7 @@ def get_default_config() -> dict:
 
         # EFN-style frontend Phi
         "Phi_sizes": (100, 100, 128),
-        "activation": "relu",
+        "activation": "gelu",
         "phi_dropout": 0.1,
 
         # Particle attention block

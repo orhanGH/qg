@@ -1,0 +1,44 @@
+{
+  "efn": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 8,
+    "early_stopping_threshold": 0.0001
+  },
+  "mefn": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 8,
+    "early_stopping_threshold": 0.0001
+  },
+  "aefn": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 8,
+    "early_stopping_threshold": 0.0001
+  },
+  "oefn": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 8,
+    "early_stopping_threshold": 0.0001
+  },
+  "bert": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 8,
+    "early_stopping_threshold": 0.0001
+  },
+  "roberta": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 8,
+    "early_stopping_threshold": 0.0001
+  },
+  "mamba": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 8,
+    "early_stopping_threshold": 0.0001
+  }
+}

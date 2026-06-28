@@ -1,0 +1,8 @@
+{
+  "mamba": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 8,
+    "early_stopping_threshold": 0.0001
+  }
+}

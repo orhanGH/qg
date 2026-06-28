@@ -1,0 +1,81 @@
+{
+  "created_at": "2026-06-28T15:03:37",
+  "source_folder": "/home/s6oraydi_hpc/pbpb_pp/3/pbpb-pp",
+  "experiment": {
+    "max_particles": 128,
+    "epochs": 200,
+    "patience": 30,
+    "learning_rate": 0.0003,
+    "weight_decay": 1e-05,
+    "batch_size": 512,
+    "activation": "gelu",
+    "max_files_per_class": -1,
+    "num_folds": 4,
+    "final_test_ratio": 0.2,
+    "seed": 42
+  },
+  "models": {
+    "efn": {
+      "activation": "gelu",
+      "learning_rate": 0.0003,
+      "weight_decay": 1e-05,
+      "batch_size": 512,
+      "epochs": 200,
+      "patience": 30
+    },
+    "mefn": {
+      "activation": "gelu",
+      "learning_rate": 0.0003,
+      "weight_decay": 1e-05,
+      "batch_size": 512,
+      "epochs": 200,
+      "patience": 30
+    },
+    "aefn": {
+      "activation": "gelu",
+      "learning_rate": 0.0003,
+      "weight_decay": 1e-05,
+      "batch_size": 512,
+      "epochs": 200,
+      "patience": 30
+    },
+    "oefn": {
+      "activation": "gelu",
+      "learning_rate": 0.0003,
+      "weight_decay": 1e-05,
+      "batch_size": 512,
+      "epochs": 200,
+      "patience": 30
+    },
+    "bert": {
+      "activation": "gelu",
+      "learning_rate": 0.0003,
+      "weight_decay": 1e-05,
+      "batch_size": 512,
+      "epochs": 200,
+      "patience": 30
+    },
+    "roberta": {
+      "activation": "gelu",
+      "learning_rate": 0.0003,
+      "weight_decay": 1e-05,
+      "batch_size": 512,
+      "epochs": 200,
+      "patience": 30
+    },
+    "mamba": {
+      "activation": "gelu",
+      "learning_rate": 0.0003,
+      "weight_decay": 1e-05,
+      "batch_size": 512,
+      "epochs": 200,
+      "patience": 30
+    }
+  },
+  "notes": [
+    "This archive is made from the actual runnable experiment folder: /home/s6oraydi_hpc/pbpb_pp/3/pbpb-pp",
+    "All configurable model activations are set to gelu.",
+    "The Slurm scripts are configured for all files, max_particles=128, epochs=200.",
+    "Results/logs/checkpoints/splits are intentionally excluded from this code archive."
+  ]
+}

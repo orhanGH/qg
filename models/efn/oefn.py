@@ -25,7 +25,7 @@ def get_default_config() -> dict:
         # oEFN architecture
         "Phi_sizes": (100, 100, 128),
         "F_sizes": (100, 100, 100),
-        "activation": "relu",
+        "activation": "gelu",
 
         # Observable branch projection
         "obs_latent_dim": 64,

@@ -22,7 +22,7 @@ def get_default_config() -> dict:
         # Networks
         "Phi_sizes": (100, 100, 128),
         "F_sizes": (100, 100, 100),
-        "activation": "relu",
+        "activation": "gelu",
         # Dropout
         "phi_dropout": 0.1,
         "moment_dropout": 0.1,
