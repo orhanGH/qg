@@ -244,7 +244,16 @@ def main():
     optimized_configs = load_optimized_configs(args.optimized_config)
 
     hf_model_names = {"transformer_encoder", "mamba"}
-    keras_model_names = {"efn", "mefn", "aefn", "oefn"}
+    keras_model_names = {
+    "efn",
+    "mefn",
+    "aefn",
+    "oefn",
+    "aefn_before_phi",
+    "aefn_after_phi",
+    "aefn_before_f",
+    "aefn_all",
+    }
     requested_models = [name.lower() for name in args.models]
     need_obsvs = "oefn" in requested_models
 
