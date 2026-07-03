@@ -17,15 +17,14 @@ SEED=42
 EPOCHS=200
 
 
-TORCH_MODELS=(bert roberta)
+TORCH_MODELS=(transformer_encoder)
 
 MODEL_INDEX=$((SLURM_ARRAY_TASK_ID / 4))
 FOLD=$((SLURM_ARRAY_TASK_ID % 4 + 1))
 MODEL=${TORCH_MODELS[$MODEL_INDEX]}
 
 case "$MODEL" in
-  bert) BASE_RESULTS_DIR="bert_hf_trainer_results" ;;
-  roberta) BASE_RESULTS_DIR="roberta_hf_trainer_results" ;;
+  transformer_encoder) BASE_RESULTS_DIR="transformer_encoder_results" ;;
   *) echo "Unknown model: $MODEL"; exit 1 ;;
 esac
 
@@ -49,17 +48,16 @@ hash -r
 
 export PYTHONNOUSERSITE=1
 
-cd /home/s6oraydi_hpc/pbpb_pp/3/pbpb-pp
+cd /home/s6oraydi_hpc/pbpb_pp/4/pbpb-pp
 
-RUNROOT=/lustre/scratch/data/s6oraydi_hpc-pbpb_pp/s6oraydi_hpc_runs
+RUNROOT=/lustre/scratch/data/s6oraydi_hpc-pbpb_pp/s6oraydi_hpc_runs_v4_transformer_encoder
 
 mkdir -p "$RUNROOT"/{logs,runs,splits,checkpoints,plots,predictions,configs_runtime}
-mkdir -p "$RUNROOT"/runs/{bert_hf_trainer_results,roberta_hf_trainer_results}
+mkdir -p "$RUNROOT"/runs/{transformer_encoder_results}
 mkdir -p "$RUNROOT/runs/$BASE_RESULTS_DIR/fold_$FOLD"
 
 ln -sfn "$RUNROOT/splits" splits
-ln -sfn "$RUNROOT/runs/bert_hf_trainer_results" bert_hf_trainer_results
-ln -sfn "$RUNROOT/runs/roberta_hf_trainer_results" roberta_hf_trainer_results
+ln -sfn "$RUNROOT/runs/transformer_encoder_results" transformer_encoder_results
 
 TASK_CONFIG="$RUNROOT/configs_runtime/${MODEL}_fold_${FOLD}_${SLURM_JOB_ID}.json"
 

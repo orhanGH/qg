@@ -21,8 +21,8 @@ def parse_args():
     parser.add_argument(
         "--models",
         nargs="+",
-        default=["bert", "roberta", "mamba", "efn", "mefn", "aefn", "oefn"],
-        help="Models to run. Options: bert roberta mamba efn mefn aefn oefn.",
+        default=["transformer_encoder", "mamba", "efn", "mefn", "aefn", "oefn"],
+        help="Models to run. Options: transformer_encoder mamba efn mefn aefn oefn.",
     )
 
     parser.add_argument(
@@ -153,10 +153,8 @@ def save_split_indices(project_root, dev_idx, final_test_idx, folds, shared_conf
 def get_hf_runner_and_model(model_name):
     from runners.hf_runner import run_hf_experiment
 
-    if model_name == "bert":
-        from models.hf import bert as model_module
-    elif model_name == "roberta":
-        from models.hf import roberta as model_module
+    if model_name == "transformer_encoder":
+        from models.hf import transformer_encoder as model_module
     elif model_name == "mamba":
         from models.hf import mamba as model_module
     else:
@@ -233,7 +231,7 @@ def main():
 
     optimized_configs = load_optimized_configs(args.optimized_config)
 
-    hf_model_names = {"bert", "roberta", "mamba"}
+    hf_model_names = {"transformer_encoder", "mamba"}
     keras_model_names = {"efn", "mefn", "aefn", "oefn"}
     requested_models = [name.lower() for name in args.models]
     need_obsvs = "oefn" in requested_models

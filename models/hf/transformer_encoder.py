@@ -1,0 +1,126 @@
+import torch
+import torch.nn as nn
+
+from transformers import BertConfig, BertModel
+from transformers.modeling_outputs import SequenceClassifierOutput
+
+
+class HFTransformerEncoderJetClassifier(nn.Module):
+    def __init__(
+        self,
+        input_dim: int = 3,
+        hidden_dim: int = 128,
+        num_layers: int = 3,
+        num_heads: int = 4,
+        num_classes: int = 2,
+        max_particles: int = 30,
+        dropout: float = 0.1,
+        activation: str = "gelu",
+    ):
+        super().__init__()
+
+        ff_dim = hidden_dim * 4
+
+        self.input_projection = nn.Linear(input_dim, hidden_dim)
+
+        encoder_config = BertConfig(
+            vocab_size=2,
+            hidden_size=hidden_dim,
+            num_hidden_layers=num_layers,
+            num_attention_heads=num_heads,
+            intermediate_size=ff_dim,
+            max_position_embeddings=max_particles,
+            hidden_dropout_prob=dropout,
+            attention_probs_dropout_prob=dropout,
+            hidden_act=activation,
+            type_vocab_size=1,
+            num_labels=num_classes,
+        )
+
+        self.encoder = BertModel(
+            encoder_config,
+            add_pooling_layer=False,
+        )
+        remove_position_embeddings(self.encoder)
+
+        self.classifier = nn.Linear(hidden_dim, num_classes)
+        self.loss_fn = nn.CrossEntropyLoss()
+
+    def forward(self, particles=None, labels=None):
+        attention_mask = (particles.abs().sum(dim=-1) > 0).long()
+
+        inputs_embeds = self.input_projection(particles)
+
+        outputs = self.encoder(
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+        )
+
+        encoded = outputs.last_hidden_state
+
+        valid_mask = attention_mask.float()
+        weights = particles[..., 0].clamp_min(0.0) * valid_mask
+        weights = weights / weights.sum(dim=1, keepdim=True).clamp_min(1e-8)
+
+        jet_repr = (encoded * weights.unsqueeze(-1)).sum(dim=1)
+
+        logits = self.classifier(jet_repr)
+
+        loss = None
+        if labels is not None:
+            loss = self.loss_fn(logits, labels)
+
+        return SequenceClassifierOutput(
+            loss=loss,
+            logits=logits,
+        )
+
+
+def get_default_config() -> dict:
+    return {
+        "model_name": "transformer_encoder",
+        "results_dir_name": "transformer_encoder_results",
+        "hidden_dim": 64,
+        "num_layers": 2,
+        "num_heads": 4,
+        "dropout": 0.1,
+        "activation": "gelu",
+        "batch_size": 256,
+        "epochs": 10,
+        "learning_rate": 3e-4,
+        "weight_decay": 1e-5,
+    }
+
+
+def build_model(config: dict):
+    return HFTransformerEncoderJetClassifier(
+        input_dim=3,
+        hidden_dim=config["hidden_dim"],
+        num_layers=config["num_layers"],
+        num_heads=config["num_heads"],
+        num_classes=2,
+        max_particles=config["max_particles"],
+        dropout=config["dropout"],
+        activation=config.get("activation", "gelu"),
+    )
+
+
+def get_model_summary_fields(config: dict) -> dict:
+    return {
+        "hidden_dim": config["hidden_dim"],
+        "num_layers": config["num_layers"],
+        "num_heads": config["num_heads"],
+        "dropout": config["dropout"],
+        "activation": config.get("activation", "gelu"),
+    }
+    
+def remove_position_embeddings(model: nn.Module) -> None:
+    """Disable learned absolute positional embeddings.
+
+    This keeps the Hugging Face encoder backend but prevents the model from
+    receiving an artificial particle-position index.
+    """
+    if hasattr(model, "embeddings") and hasattr(model.embeddings, "position_embeddings"):
+        with torch.no_grad():
+            model.embeddings.position_embeddings.weight.zero_()
+        model.embeddings.position_embeddings.weight.requires_grad_(False)

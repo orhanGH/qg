@@ -57,9 +57,9 @@ export MALLOC_ARENA_MAX=2
 export NVIDIA_LIBS=$(find "$ENV/lib/python3.11/site-packages/nvidia" -type d -name lib | paste -sd: - || true)
 export LD_LIBRARY_PATH="$NVIDIA_LIBS:$ENV/lib:${LD_LIBRARY_PATH:-}"
 
-cd /home/s6oraydi_hpc/pbpb_pp/3/pbpb-pp
+cd /home/s6oraydi_hpc/pbpb_pp/4/pbpb-pp
 
-RUNROOT=/lustre/scratch/data/s6oraydi_hpc-pbpb_pp/s6oraydi_hpc_runs
+RUNROOT=/lustre/scratch/data/s6oraydi_hpc-pbpb_pp/s6oraydi_hpc_runs_v4_transformer_encoder
 
 mkdir -p "$RUNROOT"/{logs,runs,splits,checkpoints,plots,predictions,configs_runtime}
 mkdir -p "$RUNROOT"/runs/{efn_results,mefn_results,aefn_results,oefn_results}

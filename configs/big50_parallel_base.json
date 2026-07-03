@@ -39,27 +39,17 @@
     "epochs": 200,
     "activation": "gelu"
   },
-  "bert": {
-    "batch_size": 512,
-    "use_early_stopping": true,
-    "patience": 30,
-    "early_stopping_threshold": 0.0001,
-    "learning_rate": 0.0003,
-    "weight_decay": 1e-05,
-    "epochs": 200,
-    "activation": "gelu"
-  },
-  "roberta": {
-    "batch_size": 512,
-    "use_early_stopping": true,
-    "patience": 30,
-    "early_stopping_threshold": 0.0001,
-    "learning_rate": 0.0003,
-    "weight_decay": 1e-05,
-    "epochs": 200,
-    "activation": "gelu"
-  },
   "mamba": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 30,
+    "early_stopping_threshold": 0.0001,
+    "learning_rate": 0.0003,
+    "weight_decay": 1e-05,
+    "epochs": 200,
+    "activation": "gelu"
+  },
+  "transformer_encoder": {
     "batch_size": 512,
     "use_early_stopping": true,
     "patience": 30,

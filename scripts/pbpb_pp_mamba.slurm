@@ -41,9 +41,9 @@ hash -r
 
 export PYTHONNOUSERSITE=1
 
-cd /home/s6oraydi_hpc/pbpb_pp/3/pbpb-pp
+cd /home/s6oraydi_hpc/pbpb_pp/4/pbpb-pp
 
-RUNROOT=/lustre/scratch/data/s6oraydi_hpc-pbpb_pp/s6oraydi_hpc_runs
+RUNROOT=/lustre/scratch/data/s6oraydi_hpc-pbpb_pp/s6oraydi_hpc_runs_v4_transformer_encoder
 
 mkdir -p "$RUNROOT"/{logs,runs,splits,checkpoints,plots,predictions,configs_runtime}
 mkdir -p "$RUNROOT/runs/$BASE_RESULTS_DIR/fold_$FOLD"
