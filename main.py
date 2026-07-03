@@ -210,6 +210,8 @@ def apply_config_overrides(
     model_config["final_test_ratio"] = shared_config["final_test_ratio"]
     model_config["seed"] = shared_config["seed"]
     model_config["epochs"] = args.epochs
+    model_config["learning_rate"] = shared_config["learning_rate"]
+    model_config["weight_decay"] = shared_config["weight_decay"]
 
     print(f"Final config for {model_name}:")
     print(json.dumps(model_config, indent=2))
