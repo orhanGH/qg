@@ -174,6 +174,18 @@ def get_keras_runner_and_model(model_name):
         from models.efn import aefn as model_module
     elif model_name == "oefn":
         from models.efn import oefn as model_module
+    elif model_name == "aefn_before_phi":
+        from models.efn import aefn_before_phi as model_module
+#######################################################
+    elif model_name == "aefn_after_phi":
+        from models.efn import aefn_after_phi as model_module
+
+    elif model_name == "aefn_before_f":
+        from models.efn import aefn_before_f as model_module
+
+    elif model_name == "aefn_all":
+        from models.efn import aefn_all as model_module
+######################################################
     else:
         raise ValueError(f"Unknown Keras model: {model_name}")
 
