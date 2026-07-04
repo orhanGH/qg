@@ -1,20 +1,15 @@
-from tf_keras.models import Model
-
+import tensorflow as tf
+from tf_keras import Model
 from tf_keras.layers import (
     Input,
     Dense,
-    TimeDistributed,
-    Lambda,
+    Dropout,
     MultiHeadAttention,
     LayerNormalization,
     Add,
-    Dropout,
+    Lambda,
 )
-
 from tf_keras.optimizers import Adam
-from tf_keras import backend as K
-
-import tensorflow as tf
 
 
 def get_default_config() -> dict:
@@ -22,48 +17,37 @@ def get_default_config() -> dict:
         "model_name": "aefn",
         "results_dir_name": "aefn_results",
 
+        # EFN input:
+        # z_i = momentum fraction
+        # p_i = (Delta eta_i, Delta phi_i)
         "input_dim": 2,
+
+        # Phi network
+        "Phi_sizes": (100, 100, 128),
+
+        # F network
+        "F_sizes": (100, 100, 100),
+
         "output_dim": 2,
 
-        # EFN-style frontend Phi
-        "Phi_sizes": (100, 100, 128),
-        "activation": "gelu",
-        "phi_dropout": 0.1,
-
-        # Particle attention block
-        "attention_dim": 128,
-        "num_heads": 4,
-        "attention_dropout": 0.1,
-        "num_attention_blocks": 1,
-
-        # Dropout after energy-weighted latent sum
         "latent_dropout": 0.1,
-
-        # Backend F network
-        "F_sizes": (100, 100, 100),
-        "F_dropout": 0.1,
+        "F_dropouts": 0.1,
+        "activation": "gelu",
 
         "batch_size": 500,
         "epochs": 50,
         "patience": 2,
         "learning_rate": 1e-3,
         "use_early_stopping": True,
+
+        # Attention settings
+        "attention_dim": 128,
+        "num_heads": 4,
+        "attention_dropout": 0.1,
     }
 
 
 def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, context):
-    """
-    AEFN input:
-
-    z: (batch, max_particles)
-    p: (batch, max_particles, 2)
-
-    Shared X:
-    X[..., 0] = z
-    X[..., 1] = centered_y
-    X[..., 2] = centered_phi
-    """
-
     z_train = X[train_idx, :, 0]
     p_train = X[train_idx, :, 1:3]
 
@@ -84,204 +68,149 @@ def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, conte
     return train_inputs, val_inputs, test_inputs, extra_info
 
 
+def feed_forward_block(x, sizes, activation, dropout_rate, name_prefix):
+    for i, size in enumerate(sizes):
+        x = Dense(
+            size,
+            activation=activation,
+            name=f"{name_prefix}_dense_{i+1}",
+        )(x)
+
+        if dropout_rate > 0:
+            x = Dropout(
+                dropout_rate,
+                name=f"{name_prefix}_dropout_{i+1}",
+            )(x)
+
+    return x
+
+
 def build_model(config: dict, extra_info: dict | None = None):
-    """
-    Attention-based EFN.
+    activation = config.get("activation", "relu")
+    attention_dim = config.get("attention_dim", 128)
+    num_heads = config.get("num_heads", 4)
+    attention_dropout = config.get("attention_dropout", 0.0)
 
-    Standard EFN structure:
-        Phi(p_i)
-        sum_i z_i Phi(p_i)
-        F(...)
+    latent_dropout = config.get("latent_dropout", 0.0)
+    F_dropouts = config.get("F_dropouts", 0.0)
 
-    AEFN structure:
-        Phi(p_i)
-        Attention(Phi(p_1), ..., Phi(p_M))
-        sum_i z_i AttentionPhi_i
-        F(...)
-
-    Inputs:
-        input_z: (batch, particles)
-        input_p: (batch, particles, 2)
-
-    Padding:
-        padded particles have z = 0.
-        They are masked in attention and removed again by the final z-weighted sum.
-    """
-
-    num_particles = (
-        extra_info["num_particles"]
-        if extra_info is not None
-        else config["max_particles"]
+    # Input 1:
+    # z has shape: (batch_size, num_particles)
+    z_input = Input(
+        shape=(None,),
+        name="z_input",
     )
 
-    input_dim = config.get("input_dim", 2)
-    output_dim = config.get("output_dim", 2)
+    # Input 2:
+    # p has shape: (batch_size, num_particles, 2)
+    # where 2 = (Delta eta, Delta phi)
+    p_input = Input(
+        shape=(None, config["input_dim"]),
+        name="p_input",
+    )
 
-    Phi_sizes = config["Phi_sizes"]
-    F_sizes = config["F_sizes"]
+    # -------------------------------------------------------
+    # 1. Attention before Phi
+    # -------------------------------------------------------
+    # We first embed particle positions into a higher dimension.
+    x = Dense(
+        attention_dim,
+        activation=activation,
+        name="particle_embedding_before_phi",
+    )(p_input)
 
-    attention_dim = config.get("attention_dim", Phi_sizes[-1])
-    num_heads = config.get("num_heads", 4)
-    num_attention_blocks = config.get("num_attention_blocks", 1)
+    # Self-attention between particles.
+    attention_phi = MultiHeadAttention(
+        num_heads=num_heads,
+        key_dim=attention_dim // num_heads,
+        dropout=attention_dropout,
+        name="attention_before_phi",
+    )(x, x)
 
-    phi_dropout = config.get("phi_dropout", 0.0)
-    attention_dropout = config.get("attention_dropout", 0.0)
-    latent_dropout = config.get("latent_dropout", 0.0)
-    F_dropout = config.get("F_dropout", 0.0)
+    # Residual connection + normalization.
+    x = Add(name="add_attention_before_phi")([x, attention_phi])
+    x = LayerNormalization(name="norm_attention_before_phi")(x)
 
-    learning_rate = config.get("learning_rate", 1e-3)
-    activation = config.get("activation", "relu")
+    # -------------------------------------------------------
+    # 2. Phi Feed-Forward Network
+    # -------------------------------------------------------
+    # Phi processes every particle separately.
+    phi_output = feed_forward_block(
+        x=x,
+        sizes=config["Phi_sizes"],
+        activation=activation,
+        dropout_rate=latent_dropout,
+        name_prefix="Phi",
+    )
 
-    if attention_dim % num_heads != 0:
-        raise ValueError(
-            f"attention_dim must be divisible by num_heads, "
-            f"but got attention_dim={attention_dim}, num_heads={num_heads}."
-        )
+    # -------------------------------------------------------
+    # 3. Attention before F
+    # -------------------------------------------------------
+    # This attention is placed before the global EFN sum.
+    # It lets particles exchange information before the jet representation is built.
+    attention_f = MultiHeadAttention(
+        num_heads=num_heads,
+        key_dim=config["Phi_sizes"][-1] // num_heads,
+        dropout=attention_dropout,
+        name="attention_before_F",
+    )(phi_output, phi_output)
 
-    input_z = Input(shape=(num_particles,), name="input_z")
-    input_p = Input(shape=(num_particles, input_dim), name="input_p")
+    # Residual connection + normalization.
+    phi_attention_output = Add(name="add_attention_before_F")(
+        [phi_output, attention_f]
+    )
 
-    # -------------------------------------------------------------------------
-    # Padding mask
-    # -------------------------------------------------------------------------
-    # particle_mask:
-    #   shape: (batch, particles)
-    #   True  = real particle
-    #   False = padded particle
-    particle_mask = Lambda(
-        lambda z: tf.cast(tf.greater(z, 0.0), tf.bool),
-        name="particle_mask",
-    )(input_z)
+    phi_attention_output = LayerNormalization(
+        name="norm_attention_before_F"
+    )(phi_attention_output)
 
-    # MultiHeadAttention expects attention_mask broadcastable to:
-    #   (batch, query_particles, key_particles)
-    #
-    # We use a key mask repeated over all query positions:
-    #   shape: (batch, particles, particles)
-    #
-    # This masks padded key/value particles. Padded query outputs are not harmful,
-    # because they are multiplied by z=0 in the energy-weighted sum.
-    attention_mask = Lambda(
-        lambda m: tf.tile(tf.expand_dims(m, axis=1), [1, tf.shape(m)[1], 1]),
-        name="attention_mask",
-    )(particle_mask)
-
-    # -------------------------------------------------------------------------
-    # Phi network: particle-wise frontend
-    # -------------------------------------------------------------------------
-    x = input_p
-
-    for i, units in enumerate(Phi_sizes):
-        x = TimeDistributed(
-            Dense(units, activation=activation),
-            name=f"phi_dense_{i + 1}",
-        )(x)
-
-        x = Dropout(
-            phi_dropout,
-            name=f"phi_dropout_{i + 1}",
-        )(x)
-
-    # Project Phi output to attention dimension.
-    x = TimeDistributed(
-        Dense(attention_dim, activation=activation),
-        name="phi_attention_projection",
-    )(x)
-
-    x = Dropout(
-        phi_dropout,
-        name="phi_attention_projection_dropout",
-    )(x)
-
-    # -------------------------------------------------------------------------
-    # Attention blocks over particles
-    # -------------------------------------------------------------------------
-    for block_idx in range(num_attention_blocks):
-        attn_out = MultiHeadAttention(
-            num_heads=num_heads,
-            key_dim=attention_dim // num_heads,
-            dropout=attention_dropout,
-            name=f"particle_attention_{block_idx + 1}",
-        )(
-            query=x,
-            value=x,
-            key=x,
-            attention_mask=attention_mask,
-        )
-
-        x = Add(name=f"attention_residual_{block_idx + 1}")([x, attn_out])
-        x = LayerNormalization(name=f"attention_norm_{block_idx + 1}")(x)
-
-        # Small transformer-style feed-forward block.
-        ff = TimeDistributed(
-            Dense(attention_dim, activation=activation),
-            name=f"attention_ff_{block_idx + 1}",
-        )(x)
-
-        ff = Dropout(
-            attention_dropout,
-            name=f"attention_ff_dropout_{block_idx + 1}",
-        )(ff)
-
-        x = Add(name=f"ff_residual_{block_idx + 1}")([x, ff])
-        x = LayerNormalization(name=f"ff_norm_{block_idx + 1}")(x)
-
-    # -------------------------------------------------------------------------
-    # EFN-style energy-weighted latent sum:
-    #   latent = sum_i z_i * x_i
-    # -------------------------------------------------------------------------
+    # -------------------------------------------------------
+    # 4. EFN weighted sum
+    # -------------------------------------------------------
+    # EFN formula:
+    # sum_i z_i * Phi(p_i)
     z_expanded = Lambda(
         lambda z: tf.expand_dims(z, axis=-1),
         name="expand_z",
-    )(input_z)
+    )(z_input)
 
-    weighted_x = Lambda(
-        lambda tensors: tensors[0] * tensors[1],
-        name="energy_weighted_particles",
-    )([z_expanded, x])
+    weighted_particles = Lambda(
+        lambda inputs: inputs[0] * inputs[1],
+        name="z_times_particle_representation",
+    )([z_expanded, phi_attention_output])
 
-    latent = Lambda(
-        lambda t: K.sum(t, axis=1),
-        name="energy_weighted_sum",
-    )(weighted_x)
+    event_representation = Lambda(
+        lambda x: tf.reduce_sum(x, axis=1),
+        name="efn_weighted_sum",
+    )(weighted_particles)
 
-    latent = Dropout(
-        latent_dropout,
-        name="latent_dropout",
-    )(latent)
+    # -------------------------------------------------------
+    # 5. F Feed-Forward Network
+    # -------------------------------------------------------
+    f_output = feed_forward_block(
+        x=event_representation,
+        sizes=config["F_sizes"],
+        activation=activation,
+        dropout_rate=F_dropouts,
+        name_prefix="F",
+    )
 
-    # -------------------------------------------------------------------------
-    # Backend F network
-    # -------------------------------------------------------------------------
-    y = latent
-
-    for i, units in enumerate(F_sizes):
-        y = Dense(
-            units,
-            activation=activation,
-            name=f"F_dense_{i + 1}",
-        )(y)
-
-        y = Dropout(
-            F_dropout,
-            name=f"F_dropout_{i + 1}",
-        )(y)
-
+    # Final classification output.
     output = Dense(
-        output_dim,
+        config["output_dim"],
         activation="softmax",
         name="output",
-    )(y)
+    )(f_output)
 
     model = Model(
-        inputs=[input_z, input_p],
+        inputs=[z_input, p_input],
         outputs=output,
-        name="aefn",
+        name="AEFN",
     )
 
     model.compile(
-        optimizer=Adam(learning_rate=learning_rate),
         loss="categorical_crossentropy",
+        optimizer=Adam(learning_rate=config["learning_rate"]),
         metrics=["accuracy"],
     )
 
@@ -290,16 +219,15 @@ def build_model(config: dict, extra_info: dict | None = None):
 
 def get_model_summary_fields(config: dict) -> dict:
     return {
+        "model_name": config.get("model_name", "aefn"),
         "input_dim": config["input_dim"],
         "Phi_sizes": str(config["Phi_sizes"]),
-        "activation": config.get("activation", "relu"),
-        "phi_dropout": config.get("phi_dropout", 0.0),
-        "attention_dim": config["attention_dim"],
-        "num_heads": config["num_heads"],
-        "attention_dropout": config.get("attention_dropout", 0.0),
-        "num_attention_blocks": config["num_attention_blocks"],
-        "latent_dropout": config.get("latent_dropout", 0.0),
         "F_sizes": str(config["F_sizes"]),
-        "F_dropout": config.get("F_dropout", 0.0),
+        "activation": config.get("activation", "relu"),
+        "latent_dropout": config.get("latent_dropout", 0.0),
+        "F_dropouts": config.get("F_dropouts", 0.0),
         "output_dim": config["output_dim"],
+        "attention_dim": config.get("attention_dim", 128),
+        "num_heads": config.get("num_heads", 4),
+        "attention_dropout": config.get("attention_dropout", 0.0),
     }
