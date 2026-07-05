@@ -7,5 +7,7 @@ __all__ = [
     "efn",
     "mefn",
     "oefn",
-    "aefn",
+    "aefn_before_F",
+    "aefn_before_phi",
+    "aefn_before_phi_before_F"
 ]
