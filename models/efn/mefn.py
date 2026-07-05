@@ -6,12 +6,20 @@ from tf_keras.models import Model
 from tf_keras.layers import Input, Dense, TimeDistributed, Layer, Dropout
 from tf_keras.optimizers import Adam
 
+try:
+    from tf_keras.optimizers import AdamW
+except Exception:
+    AdamW = None
+
 
 def get_default_config() -> dict:
     return {
         "model_name": "mefn",
         "results_dir_name": "mefn_results",
 
+        # Input:
+        # z_i = momentum fraction
+        # p_i = (Delta eta_i, Delta phi_i)
         "input_dim": 2,
         "output_dim": 2,
 
@@ -23,17 +31,21 @@ def get_default_config() -> dict:
         "Phi_sizes": (100, 100, 128),
         "F_sizes": (100, 100, 100),
         "activation": "gelu",
+
         # Dropout
         "phi_dropout": 0.1,
         "moment_dropout": 0.1,
         "F_dropout": 0.1,
 
         # Training
-        "batch_size": 256,
-        "epochs": 5,
-        "patience": 2,
+        "batch_size": 512,
+        "epochs": 200,
+        "patience": 30,
         "learning_rate": 3e-4,
-        "use_early_stopping": False,
+        "weight_decay": 1e-4,
+        "clipnorm": 1.0,
+        "use_early_stopping": True,
+        "early_stopping_threshold": 1e-4,
     }
 
 
@@ -44,10 +56,10 @@ def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, conte
     z: (batch, max_particles)
     p: (batch, max_particles, 2)
 
-    Shared X:
-    X[..., 0] = z
-    X[..., 1] = centered_y
-    X[..., 2] = centered_phi
+    Shared X convention:
+    X[..., 0] = z = pT_i / sum_j pT_j
+    X[..., 1] = delta_eta
+    X[..., 2] = delta_phi
     """
 
     z_train = X[train_idx, :, 0]
@@ -74,20 +86,14 @@ class RecursiveMomentPooling(Layer):
     """
     Recursive Moment Pooling for MEFN.
 
-    Computes, for orders 1,...,K:
+    Computes moments up to order K:
 
         M_{a1...ak} =
             sum_i z_i * Phi_{a1}(p_i) * ... * Phi_{ak}(p_i)
 
-    using combinations with replacement a1 <= ... <= ak.
-
-    Input:
-        phi: shape (batch, particles, latent_dim)
-        z: shape (batch, particles) or (batch, particles, 1)
-
-    Output:
-        concatenated moment features:
-        shape (batch, sum_{k=1}^{K} C(latent_dim + k - 1, k))
+    The mathematical formula is direct.
+    This implementation computes the products recursively:
+    order k is built from order k-1.
     """
 
     def __init__(self, latent_dim: int, moment_order: int, **kwargs):
@@ -104,43 +110,46 @@ class RecursiveMomentPooling(Layer):
 
         moment_features = []
 
-        # Order 1 per-particle monomials:
-        # terms_a(i) = Phi_a(p_i)
+        # ---------------------------------------------------
+        # Order 1:
+        # M_a = sum_i z_i * Phi_a(p_i)
+        # ---------------------------------------------------
         previous_terms = phi
         previous_combos = [(a,) for a in range(self.latent_dim)]
 
-        # M_a = sum_i z_i * Phi_a(p_i)
         moment_1 = tf.reduce_sum(previous_terms * z, axis=1)
         moment_features.append(moment_1)
 
+        # ---------------------------------------------------
         # Higher orders:
-        # Build order k terms recursively from order k-1 terms.
+        # Build order k products from order k-1 products.
+        # ---------------------------------------------------
         for order in range(2, self.moment_order + 1):
             current_terms_parts = []
             current_combos = []
 
             for combo_idx, combo in enumerate(previous_combos):
-                # To avoid duplicates, only append channels >= last channel.
-                # Example: from (2, 5), append 5,6,...,L-1.
+                # To avoid duplicate symmetric products, only append
+                # channels >= last channel.
                 start_channel = combo[-1]
 
-                # previous_terms[:, :, combo_idx] has shape (batch, particles)
+                # previous product term:
+                # shape = (batch, particles, 1)
                 base = previous_terms[:, :, combo_idx:combo_idx + 1]
 
-                # phi_tail shape:
-                # (batch, particles, latent_dim - start_channel)
+                # allowed next Phi channels:
+                # shape = (batch, particles, latent_dim - start_channel)
                 phi_tail = phi[:, :, start_channel:]
 
-                # Recursive products:
-                # Phi_{a1}...Phi_{ak-1} * Phi_b
-                # for b >= a_{k-1}
+                # recursive product:
+                # Phi_a1 * ... * Phi_a{k-1} * Phi_b
                 new_terms = base * phi_tail
                 current_terms_parts.append(new_terms)
 
                 for new_channel in range(start_channel, self.latent_dim):
                     current_combos.append(combo + (new_channel,))
 
-            # Shape:
+            # shape:
             # (batch, particles, number_of_order_k_combinations)
             current_terms = tf.concat(current_terms_parts, axis=-1)
 
@@ -175,17 +184,49 @@ class RecursiveMomentPooling(Layer):
         return config
 
 
+def build_optimizer(config: dict):
+    learning_rate = config.get("learning_rate", 3e-4)
+    weight_decay = config.get("weight_decay", 0.0)
+    clipnorm = config.get("clipnorm", None)
+
+    if weight_decay > 0:
+        if AdamW is None:
+            print(
+                "WARNING: AdamW is not available. "
+                "Falling back to Adam without decoupled weight decay."
+            )
+            return Adam(
+                learning_rate=learning_rate,
+                clipnorm=clipnorm,
+            )
+
+        print(f"Using AdamW with weight_decay={weight_decay}")
+
+        return AdamW(
+            learning_rate=learning_rate,
+            weight_decay=weight_decay,
+            clipnorm=clipnorm,
+        )
+
+    print("Using Adam without weight decay")
+
+    return Adam(
+        learning_rate=learning_rate,
+        clipnorm=clipnorm,
+    )
+
+
 def build_model(config: dict, extra_info: dict | None = None):
     """
-    Recursive channel-style MEFN.
+    Moment Energy Flow Network.
 
-    Formula:
+    Standard EFN:
+        F(sum_i z_i Phi(p_i))
 
-        M_{a1...ak} =
-            sum_i z_i * Phi_{a1}(p_i) * ... * Phi_{ak}(p_i)
+    MEFN:
+        F(<Phi>, <Phi Phi>, ..., <Phi ... Phi>)
 
-    The moment products are built recursively to avoid recomputing each
-    product from scratch.
+    where <...> is a z-weighted sum over particles.
     """
 
     num_particles = (
@@ -197,18 +238,23 @@ def build_model(config: dict, extra_info: dict | None = None):
     input_dim = config.get("input_dim", 2)
     output_dim = config.get("output_dim", 2)
 
-    latent_dim = config["latent_dim"]
-    moment_order = config["moment_order"]
+    latent_dim = config.get("latent_dim", 16)
+    moment_order = config.get("moment_order", 3)
 
-    Phi_sizes = config["Phi_sizes"]
-    F_sizes = config["F_sizes"]
+    Phi_sizes = config.get("Phi_sizes", (100, 100, 128))
+    F_sizes = config.get("F_sizes", (100, 100, 100))
 
-    phi_dropout = config.get("phi_dropout", 0.0)
-    moment_dropout = config.get("moment_dropout", 0.0)
-    F_dropout = config.get("F_dropout", 0.0)
+    activation = config.get("activation", "gelu")
 
-    learning_rate = config.get("learning_rate", 3e-4)
-    activation = config.get("activation", "relu")
+    phi_dropout = config.get("phi_dropout", 0.1)
+    moment_dropout = config.get("moment_dropout", 0.1)
+
+    # Support both naming styles.
+    F_dropout = config.get("F_dropout", config.get("F_dropouts", 0.1))
+
+    # -------------------------------------------------------
+    # Inputs
+    # -------------------------------------------------------
     input_z = Input(
         shape=(num_particles,),
         name="input_z",
@@ -219,59 +265,76 @@ def build_model(config: dict, extra_info: dict | None = None):
         name="input_p",
     )
 
-    # Phi network on particle coordinates p = (y, phi)
-    # Output shape before phi_output:
-    # (batch, num_particles, Phi_sizes[-1])
+    # -------------------------------------------------------
+    # Phi network
+    # -------------------------------------------------------
     phi = input_p
 
     for i, units in enumerate(Phi_sizes):
         phi = TimeDistributed(
-            Dense(units, activation=activation),
+            Dense(
+                units,
+                activation=activation,
+            ),
             name=f"phi_dense_{i + 1}",
         )(phi)
 
-        phi = Dropout(
-            phi_dropout,
-            name=f"phi_dropout_{i + 1}",
-        )(phi)
+        if phi_dropout > 0:
+            phi = Dropout(
+                phi_dropout,
+                name=f"phi_dropout_{i + 1}",
+            )(phi)
 
-    # Project Phi to latent_dim channels.
-    # Output shape:
-    # (batch, num_particles, latent_dim)
+    # -------------------------------------------------------
+    # Project Phi to latent_dim channels
+    # -------------------------------------------------------
+    # Important:
+    # activation=None keeps the final latent moment channels
+    # less constrained before products are computed.
     phi = TimeDistributed(
-        Dense(latent_dim, activation=activation),
+        Dense(
+            latent_dim,
+            activation=None,
+        ),
         name="phi_output",
     )(phi)
 
-    phi = Dropout(
-        phi_dropout,
-        name="phi_output_dropout",
-    )(phi)
+    if phi_dropout > 0:
+        phi = Dropout(
+            phi_dropout,
+            name="phi_output_dropout",
+        )(phi)
 
+    # -------------------------------------------------------
     # Recursive Moment Pooling
+    # -------------------------------------------------------
     x = RecursiveMomentPooling(
         latent_dim=latent_dim,
         moment_order=moment_order,
         name="recursive_moment_pooling",
     )([phi, input_z])
 
-    x = Dropout(
-        moment_dropout,
-        name="moment_dropout",
-    )(x)
+    if moment_dropout > 0:
+        x = Dropout(
+            moment_dropout,
+            name="moment_dropout",
+        )(x)
 
+    # -------------------------------------------------------
     # F classifier network
+    # -------------------------------------------------------
     for i, units in enumerate(F_sizes):
-        x =Dense(
+        x = Dense(
             units,
             activation=activation,
             name=f"F_dense_{i + 1}",
         )(x)
 
-        x = Dropout(
-            F_dropout,
-            name=f"F_dropout_{i + 1}",
-        )(x)
+        if F_dropout > 0:
+            x = Dropout(
+                F_dropout,
+                name=f"F_dropout_{i + 1}",
+            )(x)
 
     output = Dense(
         output_dim,
@@ -285,8 +348,10 @@ def build_model(config: dict, extra_info: dict | None = None):
         name="mefn",
     )
 
+    optimizer = build_optimizer(config)
+
     model.compile(
-        optimizer=Adam(learning_rate=learning_rate),
+        optimizer=optimizer,
         loss="categorical_crossentropy",
         metrics=["accuracy"],
     )
@@ -296,13 +361,32 @@ def build_model(config: dict, extra_info: dict | None = None):
 
 def get_model_summary_fields(config: dict) -> dict:
     return {
-        "latent_dim": config["latent_dim"],
-        "moment_order": config["moment_order"],
-        "Phi_sizes": str(config["Phi_sizes"]),
-        "activation": config.get("activation", "relu"),
-        "phi_dropout": config.get("phi_dropout", 0.0),
-        "moment_dropout": config.get("moment_dropout", 0.0),
-        "F_sizes": str(config["F_sizes"]),
-        "F_dropout": config.get("F_dropout", 0.0),
+        "model_name": config.get("model_name", "mefn"),
+        "results_dir_name": config.get("results_dir_name", "mefn_results"),
+
+        "input_dim": config.get("input_dim", 2),
         "output_dim": config.get("output_dim", 2),
+
+        "latent_dim": config.get("latent_dim", 16),
+        "moment_order": config.get("moment_order", 3),
+
+        "Phi_sizes": str(config.get("Phi_sizes", (100, 100, 128))),
+        "F_sizes": str(config.get("F_sizes", (100, 100, 100))),
+        "activation": config.get("activation", "gelu"),
+
+        "phi_dropout": config.get("phi_dropout", 0.1),
+        "moment_dropout": config.get("moment_dropout", 0.1),
+        "F_dropout": config.get("F_dropout", config.get("F_dropouts", 0.1)),
+
+        "batch_size": config.get("batch_size", 512),
+        "epochs": config.get("epochs", 200),
+        "patience": config.get("patience", 30),
+        "learning_rate": config.get("learning_rate", 3e-4),
+        "weight_decay": config.get("weight_decay", 0.0),
+        "clipnorm": config.get("clipnorm", None),
+        "use_early_stopping": config.get("use_early_stopping", True),
+        "early_stopping_threshold": config.get(
+            "early_stopping_threshold",
+            1e-4,
+        ),
     }
