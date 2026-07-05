@@ -21,7 +21,7 @@ def parse_args():
     parser.add_argument(
         "--models",
         nargs="+",
-        default=["transformer_encoder", "mamba", "efn", "mefn", "aefn", "oefn"],
+        default=["transformer_encoder", "mamba", "efn", "mefn", "aefn","aefn_before_phi_before_F","aefn_before_phi","aefn_before_F", "oefn"],
         help="Models to run. Options: transformer_encoder mamba efn mefn aefn oefn.",
     )
 
@@ -177,13 +177,13 @@ def get_keras_runner_and_model(model_name):
     elif model_name == "aefn_before_phi":
         from models.efn import aefn_before_phi as model_module
 #######################################################
-    elif model_name == "aefn_after_phi":
+    elif model_name == "aefn_before_phi":
         from models.efn import aefn_after_phi as model_module
 
     elif model_name == "aefn_before_f":
         from models.efn import aefn_before_f as model_module
 
-    elif model_name == "aefn_all":
+    elif model_name == "aefn_before_phi_before_F":
         from models.efn import aefn_all as model_module
 ######################################################
     else:
@@ -252,9 +252,8 @@ def main():
     "aefn",
     "oefn",
     "aefn_before_phi",
-    "aefn_after_phi",
-    "aefn_before_f",
-    "aefn_all",
+    "aefn_before_phi_before_F",
+    "aefn_before_F",
     }
     requested_models = [name.lower() for name in args.models]
     need_obsvs = "oefn" in requested_models
