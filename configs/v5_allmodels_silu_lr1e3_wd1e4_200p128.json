@@ -1,0 +1,122 @@
+{
+  "efn": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 30,
+    "early_stopping_threshold": 0.0001,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "epochs": 200,
+    "activation": "silu"
+  },
+  "mefn": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 30,
+    "early_stopping_threshold": 0.0001,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "epochs": 200,
+    "activation": "silu"
+  },
+  "aefn": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 30,
+    "early_stopping_threshold": 0.0001,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "epochs": 200,
+    "activation": "silu"
+  },
+  "oefn": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 30,
+    "early_stopping_threshold": 0.0001,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "epochs": 200,
+    "activation": "silu"
+  },
+  "mamba": {
+    "hidden_dim": 64,
+    "num_layers": 2,
+    "state_size": 16,
+    "conv_kernel": 4,
+    "expand": 2,
+    "dropout": 0.1,
+    "activation": "silu",
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 30,
+    "early_stopping_threshold": 0.0001,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "epochs": 200
+  },
+  "transformer_encoder": {
+    "hidden_dim": 64,
+    "num_layers": 2,
+    "num_heads": 4,
+    "dropout": 0.1,
+    "activation": "silu",
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 30,
+    "early_stopping_threshold": 0.0001,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "epochs": 200
+  },
+  "aefn_before_phi": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 30,
+    "early_stopping_threshold": 0.0001,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "epochs": 200,
+    "activation": "silu"
+  },
+  "aefn_before_F": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 30,
+    "early_stopping_threshold": 0.0001,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "epochs": 200,
+    "activation": "silu"
+  },
+  "aefn_before_phi_before_F": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 30,
+    "early_stopping_threshold": 0.0001,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "epochs": 200,
+    "activation": "silu"
+  },
+  "aefn_before_f": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 30,
+    "early_stopping_threshold": 0.0001,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "epochs": 200,
+    "activation": "silu"
+  },
+  "aefn_before_phi_before_f": {
+    "batch_size": 512,
+    "use_early_stopping": true,
+    "patience": 30,
+    "early_stopping_threshold": 0.0001,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "epochs": 200,
+    "activation": "silu"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "mefn": {
+    "input_dim": 2,
+    "output_dim": 2,
+    "latent_dim": 16,
+    "moment_order": 3,
+    "Phi_sizes": [100, 100, 128],
+    "F_sizes": [100, 100, 100],
+
+    "activation": "silu",
+    "phi_dropout": 0.1,
+    "moment_dropout": 0.1,
+    "F_dropout": 0.1,
+
+    "batch_size": 512,
+    "epochs": 200,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+
+    "use_early_stopping": true,
+    "patience": 30,
+    "early_stopping_threshold": 0.0001
+  }
+}

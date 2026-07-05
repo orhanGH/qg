@@ -21,7 +21,7 @@ def parse_args():
     parser.add_argument(
         "--models",
         nargs="+",
-        default=["transformer_encoder", "mamba", "efn", "mefn", "aefn","aefn_before_phi_before_F","aefn_before_phi","aefn_before_F", "oefn"],
+        default=["transformer_encoder", "mamba", "efn", "mefn", "aefn","aefn_before_phi_before_f","aefn_before_phi","aefn_before_f", "oefn"],
         help="Models to run. Options: transformer_encoder mamba efn mefn aefn oefn.",
     )
 
@@ -166,17 +166,19 @@ def get_hf_runner_and_model(model_name):
 def get_keras_runner_and_model(model_name):
     from runners.keras_runner import run_keras_experiment
 
-    if model_name == "efn":
+    key = model_name.lower()
+
+    if key == "efn":
         from models.efn import efn as model_module
-    elif model_name == "mefn":
+    elif key == "mefn":
         from models.efn import mefn as model_module
-    elif model_name == "oefn":
+    elif key == "oefn":
         from models.efn import oefn as model_module
-    elif model_name == "aefn_before_phi":
+    elif key == "aefn_before_phi":
         from models.efn import aefn_before_phi as model_module
-    elif model_name == "aefn_before_F":
+    elif key == "aefn_before_f":
         from models.efn import aefn_before_F as model_module
-    elif model_name == "aefn_before_phi_before_F":
+    elif key == "aefn_before_phi_before_f":
         from models.efn import aefn_before_phi_before_F as model_module
     else:
         raise ValueError(f"Unknown Keras model: {model_name}")
@@ -228,8 +230,8 @@ def main():
         "max_files_per_class": args.max_files_per_class,
         "batch_size": 512,
         "epochs": args.epochs,
-        "learning_rate": 3e-4,
-        "weight_decay": 1e-5,
+        "learning_rate": 1e-3,
+        "weight_decay": 1e-4,
         "use_early_stopping": True,
         "patience": 30,
         "early_stopping_threshold": 1e-4,
@@ -244,8 +246,8 @@ def main():
     "aefn",
     "oefn",
     "aefn_before_phi",
-    "aefn_before_phi_before_F",
-    "aefn_before_F",
+    "aefn_before_phi_before_f",
+    "aefn_before_f",
     }
     requested_models = [name.lower() for name in args.models]
     need_obsvs = "oefn" in requested_models
