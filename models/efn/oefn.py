@@ -18,9 +18,19 @@ def get_default_config() -> dict:
         # Used only in fallback mode when no Marvin obsvs/x is passed.
         "efp_degree": 3,
 
-        # Marvin obsvs/x has 3472 features.
+        # Marvin obsvs/x has 3472 features:
+        # nsubs = 60
+        # eecs  = 23
+        # efps  = 3389
+        #
+        # We remove eecs and use only:
+        # nsubs + efps = 60 + 3389 = 3449 features.
+        #
         # We scale on train fold only and then apply PCA.
         "n_pca_components": 13,
+        "remove_eecs": True,
+        "nsubs_dim": 60,
+        "eecs_dim": 23,
 
         # oEFN architecture
         "Phi_sizes": (100, 100, 128),
@@ -65,6 +75,56 @@ def compute_efp_observables(X: np.ndarray, config: dict) -> np.ndarray:
     return efpset.batch_compute(X)
 
 
+def remove_eecs_from_observables(X_obs: np.ndarray, config: dict) -> np.ndarray:
+    """
+    Remove energy-energy correlation features from Marvin observables.
+
+    Marvin obsvs/x is assumed to be:
+
+        concat(nsubs, eecs, efps)
+
+    Shapes:
+        nsubs = 60
+        eecs  = 23
+        efps  = 3389
+
+    After removal:
+        concat(nsubs, efps)
+    """
+
+    if not config.get("remove_eecs", False):
+        return X_obs
+
+    nsubs_dim = config.get("nsubs_dim", 60)
+    eecs_dim = config.get("eecs_dim", 23)
+
+    eecs_start = nsubs_dim
+    eecs_end = nsubs_dim + eecs_dim
+
+    if eecs_end > X_obs.shape[1]:
+        raise ValueError(
+            f"EEC slice is outside observable matrix. "
+            f"nsubs_dim={nsubs_dim}, eecs_dim={eecs_dim}, "
+            f"but X_obs has only {X_obs.shape[1]} columns."
+        )
+
+    X_obs_without_eecs = np.concatenate(
+        [
+            X_obs[:, :eecs_start],  # keep nsubs
+            X_obs[:, eecs_end:],    # keep efps
+        ],
+        axis=1,
+    )
+
+    print("Removed eecs from oEFN observables.")
+    print("Now using only nsubs + efps.")
+    print("EEC column range removed:", eecs_start, "to", eecs_end)
+    print("Observable matrix shape before EEC removal:", X_obs.shape)
+    print("Observable matrix shape after EEC removal:", X_obs_without_eecs.shape)
+
+    return X_obs_without_eecs
+
+
 def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, context):
     """
     Prepare oEFN fold inputs.
@@ -79,6 +139,10 @@ def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, conte
         X["parts"][..., 2] = delta_phi
 
         X["obsvs"] = concat(nsubs, eecs, efps)
+
+        In this version:
+            eecs are removed.
+            Only nsubs + efps are used.
 
     Fallback mode:
         X is a normal particle array.
@@ -97,7 +161,9 @@ def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, conte
 
         print("Using precomputed Marvin observables from obsvs/x for oEFN.")
         print("Particle tensor shape:", X_parts.shape)
-        print("Observable matrix shape:", X_obs.shape)
+        print("Observable matrix shape before filtering:", X_obs.shape)
+
+        X_obs = remove_eecs_from_observables(X_obs, config)
 
     else:
         X_parts = X
@@ -171,7 +237,11 @@ def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, conte
     val_inputs = [z_val, p_val, obs_val]
     test_inputs = [z_test, p_test, obs_test]
 
-    observable_source = "marvin_obsvs_x" if isinstance(X, dict) else "computed_efps"
+    observable_source = (
+        "marvin_obsvs_x_without_eecs"
+        if isinstance(X, dict)
+        else "computed_efps"
+    )
 
     extra_info = {
         "num_particles": X_parts.shape[1],
@@ -181,6 +251,9 @@ def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, conte
         "efp_degree": config.get("efp_degree"),
         "n_pca_components": config["n_pca_components"],
         "obs_latent_dim": config.get("obs_latent_dim", 64),
+        "remove_eecs": config.get("remove_eecs", False),
+        "nsubs_dim": config.get("nsubs_dim", 60),
+        "eecs_dim": config.get("eecs_dim", 23),
     }
 
     return train_inputs, val_inputs, test_inputs, extra_info
@@ -194,7 +267,8 @@ def build_model(config: dict, extra_info: dict | None = None):
             z, p -> Phi(p) -> sum_i z_i Phi(p_i) -> latent_summary
 
         observable branch:
-            obsvs/x -> StandardScaler -> PCA -> Dense projection -> obs_latent
+            obsvs/x -> remove eecs -> StandardScaler -> PCA
+            -> Dense projection -> obs_latent
 
         classifier:
             concat(latent_summary, obs_latent) -> F network -> softmax
@@ -307,6 +381,9 @@ def get_model_summary_fields(config: dict) -> dict:
         "n_pca_components": config["n_pca_components"],
         "obs_latent_dim": config.get("obs_latent_dim", 64),
         "obs_dropout": config.get("obs_dropout", 0.0),
+        "remove_eecs": config.get("remove_eecs", False),
+        "nsubs_dim": config.get("nsubs_dim", 60),
+        "eecs_dim": config.get("eecs_dim", 23),
         "Phi_sizes": str(config["Phi_sizes"]),
         "F_sizes": str(config["F_sizes"]),
         "activation": config.get("activation", "relu"),
