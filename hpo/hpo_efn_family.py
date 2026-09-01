@@ -27,44 +27,35 @@ DATA_ROOT = Path(
 
 HPO_ROOT = Path(
     "/lustre/scratch/data/s6oraydi_hpc-pbpb_pp/"
-    "s6oraydi_hpc_runs/hpo_large_search"
+    "s6oraydi_hpc_runs/hpo_reduced"
 )
 
 
 # ============================================================
-# Optuna pruning callback for Keras
+# Keras -> Optuna pruning
 # ============================================================
 
 class OptunaPruningCallback(Callback):
 
     def __init__(self, trial, fold):
         super().__init__()
-
         self.trial = trial
         self.fold = fold
 
-    def on_epoch_end(
-        self,
-        epoch,
-        logs=None,
-    ):
+    def on_epoch_end(self, epoch, logs=None):
 
         logs = logs or {}
 
-        val_loss = logs.get(
-            "val_loss"
-        )
+        val_loss = logs.get("val_loss")
 
         if val_loss is None:
             return
 
-        # We maximize the reported value.
-        # Therefore report negative validation loss.
-        score = -float(
-            val_loss
-        )
+        # Study maximizes the reported value.
+        # Therefore use negative validation loss.
+        score = -float(val_loss)
 
-        # Unique step across all folds.
+        # Unique step for every epoch/fold.
         step = (
             (self.fold - 1) * 1000
             + epoch
@@ -86,7 +77,7 @@ class OptunaPruningCallback(Callback):
 
 
 # ============================================================
-# Arguments
+# CLI
 # ============================================================
 
 def parse_args():
@@ -106,7 +97,7 @@ def parse_args():
     parser.add_argument(
         "--n-trials",
         type=int,
-        default=50,
+        default=20,
     )
 
     parser.add_argument(
@@ -137,38 +128,30 @@ def parse_args():
 
 
 # ============================================================
-# Model import
+# Model module
 # ============================================================
 
-def get_module(
-    model_name,
-):
+def get_module(model_name):
 
     if model_name == "efn":
-
         from models.efn import efn
-
         return efn
 
     if model_name == "mefn":
-
         from models.efn import mefn
-
         return mefn
 
     if model_name == "oefn":
-
         from models.efn import oefn
-
         return oefn
 
     raise ValueError(
-        model_name
+        f"Unknown model: {model_name}"
     )
 
 
 # ============================================================
-# Hyperparameter search space
+# Reduced HPO search space
 # ============================================================
 
 def suggest_config(
@@ -179,10 +162,7 @@ def suggest_config(
     patience,
 ):
 
-    config = (
-        module
-        .get_default_config()
-    )
+    config = module.get_default_config()
 
 
     # ========================================================
@@ -199,110 +179,83 @@ def suggest_config(
 
     config["epochs"] = epochs
 
-    config["use_early_stopping"] = True
-
     config["patience"] = patience
 
-    config[
-        "early_stopping_threshold"
-    ] = 1e-4
+    config["use_early_stopping"] = True
+
+    config["early_stopping_threshold"] = 1e-4
 
 
     # ========================================================
-    # Shared activation search
+    # Shared: activation
+    #
+    # Reduced from:
+    # relu / gelu / silu
+    #
+    # to:
+    # gelu / silu
     # ========================================================
 
-    config["activation"] = (
-        trial.suggest_categorical(
-            "activation",
-            [
-                "relu",
-                "gelu",
-                "silu",
-            ],
-        )
+    config["activation"] = trial.suggest_categorical(
+        "activation",
+        [
+            "gelu",
+            "silu",
+        ],
     )
 
 
     # ========================================================
-    # Batch size
+    # Shared: fixed batch size
+    #
+    # Do NOT search 256 / 512 / 1024.
+    # This keeps the comparison fair and saves time.
     # ========================================================
 
-    config["batch_size"] = (
-        trial.suggest_categorical(
-            "batch_size",
-            [
-                256,
-                512,
-                1024,
-            ],
-        )
+    config["batch_size"] = 512
+
+
+    # ========================================================
+    # Shared: learning rate
+    # ========================================================
+
+    config["learning_rate"] = trial.suggest_categorical(
+        "learning_rate",
+        [
+            1e-4,
+            3e-4,
+            1e-3,
+        ],
     )
 
 
     # ========================================================
-    # Learning rate
+    # Shared: Phi architecture
+    #
+    # Only baseline and wide.
     # ========================================================
 
-    config["learning_rate"] = (
-        trial.suggest_categorical(
-            "learning_rate",
-            [
-                3e-5,
-                1e-4,
-                3e-4,
-                1e-3,
-            ],
-        )
-    )
-
-
-    # ========================================================
-    # Phi architecture
-    # ========================================================
-
-    phi_choice = (
-        trial.suggest_categorical(
-            "Phi_arch",
-            [
-                "small",
-                "baseline",
-                "wide",
-                "deep",
-            ],
-        )
+    phi_choice = trial.suggest_categorical(
+        "Phi_arch",
+        [
+            "baseline",
+            "wide",
+        ],
     )
 
     phi_archs = {
 
-        "small":
-            (
-                64,
-                64,
-                64,
-            ),
+        "baseline": (
+            100,
+            100,
+            128,
+        ),
 
-        "baseline":
-            (
-                100,
-                100,
-                128,
-            ),
-
-        "wide":
-            (
-                128,
-                128,
-                128,
-            ),
-
-        "deep":
-            (
-                128,
-                128,
-                128,
-                128,
-            ),
+        "wide": (
+            128,
+            128,
+            128,
+        ),
     }
 
     config["Phi_sizes"] = (
@@ -313,49 +266,29 @@ def suggest_config(
 
 
     # ========================================================
-    # F architecture
+    # Shared: F architecture
     # ========================================================
 
-    f_choice = (
-        trial.suggest_categorical(
-            "F_arch",
-            [
-                "small",
-                "baseline",
-                "wide",
-                "deep",
-            ],
-        )
+    f_choice = trial.suggest_categorical(
+        "F_arch",
+        [
+            "baseline",
+            "wide",
+        ],
     )
 
     f_archs = {
 
-        "small":
-            (
-                64,
-                64,
-            ),
+        "baseline": (
+            100,
+            100,
+            100,
+        ),
 
-        "baseline":
-            (
-                100,
-                100,
-                100,
-            ),
-
-        "wide":
-            (
-                128,
-                128,
-            ),
-
-        "deep":
-            (
-                128,
-                128,
-                128,
-                128,
-            ),
+        "wide": (
+            128,
+            128,
+        ),
     }
 
     config["F_sizes"] = (
@@ -366,224 +299,184 @@ def suggest_config(
 
 
     # ========================================================
-    # EFN
+    # EFN-specific
     # ========================================================
 
     if model_name == "efn":
 
-        config[
-            "latent_dropout"
-        ] = trial.suggest_categorical(
-            "latent_dropout",
-            [
-                0.0,
-                0.05,
-                0.10,
-                0.20,
-                0.30,
-            ],
+        config["latent_dropout"] = (
+            trial.suggest_categorical(
+                "latent_dropout",
+                [
+                    0.0,
+                    0.1,
+                    0.2,
+                ],
+            )
         )
 
-        config[
-            "F_dropouts"
-        ] = trial.suggest_categorical(
-            "F_dropout",
-            [
-                0.0,
-                0.05,
-                0.10,
-                0.20,
-                0.30,
-            ],
+        # EFN uses the plural key F_dropouts.
+        config["F_dropouts"] = (
+            trial.suggest_categorical(
+                "F_dropout",
+                [
+                    0.0,
+                    0.1,
+                    0.2,
+                ],
+            )
         )
 
 
     # ========================================================
-    # MEFN
+    # MEFN-specific
     # ========================================================
 
     elif model_name == "mefn":
 
-        config[
-            "latent_dim"
-        ] = trial.suggest_categorical(
-            "latent_dim",
-            [
-                8,
-                16,
-                24,
-                32,
-            ],
+        config["latent_dim"] = (
+            trial.suggest_categorical(
+                "latent_dim",
+                [
+                    16,
+                    24,
+                ],
+            )
         )
 
-        config[
-            "moment_order"
-        ] = trial.suggest_categorical(
-            "moment_order",
-            [
-                2,
-                3,
-            ],
+        config["moment_order"] = (
+            trial.suggest_categorical(
+                "moment_order",
+                [
+                    2,
+                    3,
+                ],
+            )
         )
 
-        config[
-            "phi_dropout"
-        ] = trial.suggest_categorical(
-            "phi_dropout",
-            [
-                0.0,
-                0.05,
-                0.10,
-                0.20,
-                0.30,
-            ],
+        config["phi_dropout"] = (
+            trial.suggest_categorical(
+                "phi_dropout",
+                [
+                    0.0,
+                    0.1,
+                    0.2,
+                ],
+            )
         )
 
-        config[
-            "moment_dropout"
-        ] = trial.suggest_categorical(
-            "moment_dropout",
-            [
-                0.0,
-                0.05,
-                0.10,
-                0.20,
-                0.30,
-            ],
+        config["moment_dropout"] = (
+            trial.suggest_categorical(
+                "moment_dropout",
+                [
+                    0.0,
+                    0.1,
+                    0.2,
+                ],
+            )
         )
 
-        config[
-            "F_dropout"
-        ] = trial.suggest_categorical(
-            "F_dropout",
-            [
-                0.0,
-                0.05,
-                0.10,
-                0.20,
-                0.30,
-            ],
+        config["F_dropout"] = (
+            trial.suggest_categorical(
+                "F_dropout",
+                [
+                    0.0,
+                    0.1,
+                    0.2,
+                ],
+            )
         )
 
-        config[
-            "weight_decay"
-        ] = trial.suggest_categorical(
-            "weight_decay",
-            [
-                0.0,
-                1e-6,
-                1e-5,
-                1e-4,
-                1e-3,
-            ],
+        config["weight_decay"] = (
+            trial.suggest_categorical(
+                "weight_decay",
+                [
+                    0.0,
+                    1e-4,
+                ],
+            )
         )
 
-        config[
-            "clipnorm"
-        ] = trial.suggest_categorical(
-            "clipnorm",
-            [
-                0.5,
-                1.0,
-                2.0,
-            ],
-        )
+        # Keep fixed.
+        config["clipnorm"] = 1.0
 
 
     # ========================================================
-    # oEFN
+    # oEFN-specific
     # ========================================================
 
     elif model_name == "oefn":
 
-        config[
-            "n_pca_components"
-        ] = trial.suggest_categorical(
-            "n_pca_components",
-            [
-                8,
-                13,
-                24,
-                32,
-                64,
-            ],
+        config["n_pca_components"] = (
+            trial.suggest_categorical(
+                "n_pca_components",
+                [
+                    13,
+                    32,
+                ],
+            )
         )
 
-        config[
-            "obs_latent_dim"
-        ] = trial.suggest_categorical(
-            "obs_latent_dim",
-            [
-                32,
-                64,
-                128,
-                256,
-            ],
+        config["obs_latent_dim"] = (
+            trial.suggest_categorical(
+                "obs_latent_dim",
+                [
+                    64,
+                    128,
+                ],
+            )
         )
 
-        config[
-            "obs_dropout"
-        ] = trial.suggest_categorical(
-            "obs_dropout",
-            [
-                0.0,
-                0.05,
-                0.10,
-                0.20,
-                0.30,
-            ],
+        config["obs_dropout"] = (
+            trial.suggest_categorical(
+                "obs_dropout",
+                [
+                    0.0,
+                    0.1,
+                    0.2,
+                ],
+            )
         )
 
-        config[
-            "phi_dropout"
-        ] = trial.suggest_categorical(
-            "phi_dropout",
-            [
-                0.0,
-                0.05,
-                0.10,
-                0.20,
-                0.30,
-            ],
+        config["phi_dropout"] = (
+            trial.suggest_categorical(
+                "phi_dropout",
+                [
+                    0.0,
+                    0.1,
+                    0.2,
+                ],
+            )
         )
 
-        config[
-            "latent_dropout"
-        ] = trial.suggest_categorical(
-            "latent_dropout",
-            [
-                0.0,
-                0.05,
-                0.10,
-                0.20,
-                0.30,
-            ],
+        config["latent_dropout"] = (
+            trial.suggest_categorical(
+                "latent_dropout",
+                [
+                    0.0,
+                    0.1,
+                    0.2,
+                ],
+            )
         )
 
-        config[
-            "F_dropout"
-        ] = trial.suggest_categorical(
-            "F_dropout",
-            [
-                0.0,
-                0.05,
-                0.10,
-                0.20,
-                0.30,
-            ],
+        config["F_dropout"] = (
+            trial.suggest_categorical(
+                "F_dropout",
+                [
+                    0.0,
+                    0.1,
+                    0.2,
+                ],
+            )
         )
 
-        config[
-            "remove_eecs"
-        ] = True
+        # Fixed observable definition.
+        config["remove_eecs"] = True
 
-        config[
-            "nsubs_dim"
-        ] = 60
+        config["nsubs_dim"] = 60
 
-        config[
-            "eecs_dim"
-        ] = 23
+        config["eecs_dim"] = 23
 
 
     return config
@@ -597,14 +490,10 @@ def main():
 
     args = parse_args()
 
-    model_name = (
-        args.model
-    )
+    model_name = args.model
 
-    module = (
-        get_module(
-            model_name
-        )
+    module = get_module(
+        model_name
     )
 
     set_seed(
@@ -613,39 +502,30 @@ def main():
 
 
     # ========================================================
-    # Shared experimental config
+    # Common data/split setup
     # ========================================================
 
     shared_config = {
 
-        "seed":
-            42,
+        "seed": 42,
 
-        "num_data":
-            -1,
+        "num_data": -1,
 
-        "max_particles":
-            128,
+        "max_particles": 128,
 
-        "num_folds":
-            4,
+        "num_folds": 4,
 
-        "final_test_ratio":
-            0.2,
+        "final_test_ratio": 0.2,
 
-        "class_0":
-            "vac",
+        "class_0": "vac",
 
-        "class_1":
-            "rec",
+        "class_1": "rec",
 
-        "data_root":
-            str(
-                DATA_ROOT
-            ),
+        "data_root": str(
+            DATA_ROOT
+        ),
 
-        "max_files_per_class":
-            None,
+        "max_files_per_class": None,
     }
 
 
@@ -663,46 +543,35 @@ def main():
             file_labels,
             file_paths,
             _,
-        ) = (
-            load_marvin_parts_and_obsvs_dataset(
+        ) = load_marvin_parts_and_obsvs_dataset(
 
-                data_root=
-                    DATA_ROOT,
+            data_root=DATA_ROOT,
 
-                class_0=
-                    "vac",
+            class_0="vac",
 
-                class_1=
-                    "rec",
+            class_1="rec",
 
-                max_particles=
-                    128,
+            max_particles=128,
 
-                max_jets=
-                    None,
+            max_jets=None,
 
-                max_files_per_class=
-                    None,
+            max_files_per_class=None,
 
-                sort_by_pt=
-                    True,
+            sort_by_pt=True,
 
-                seed=
-                    42,
+            seed=42,
 
-                return_file_paths=
-                    True,
-            )
+            return_file_paths=True,
         )
+
 
         X_model = {
 
-            "parts":
-                X_parts,
+            "parts": X_parts,
 
-            "obsvs":
-                X_obsvs,
+            "obsvs": X_obsvs,
         }
+
 
     else:
 
@@ -712,41 +581,29 @@ def main():
             file_ids,
             file_labels,
             file_paths,
-        ) = (
-            load_marvin_parts_dataset(
+        ) = load_marvin_parts_dataset(
 
-                data_root=
-                    DATA_ROOT,
+            data_root=DATA_ROOT,
 
-                class_0=
-                    "vac",
+            class_0="vac",
 
-                class_1=
-                    "rec",
+            class_1="rec",
 
-                max_particles=
-                    128,
+            max_particles=128,
 
-                max_jets=
-                    None,
+            max_jets=None,
 
-                max_files_per_class=
-                    None,
+            max_files_per_class=None,
 
-                sort_by_pt=
-                    True,
+            sort_by_pt=True,
 
-                seed=
-                    42,
+            seed=42,
 
-                return_file_paths=
-                    True,
-            )
+            return_file_paths=True,
         )
 
-        X_model = (
-            X_parts
-        )
+
+        X_model = X_parts
 
 
     y = y.astype(
@@ -755,50 +612,58 @@ def main():
 
 
     # ========================================================
-    # Reuse same file-level CV split
+    # Reuse exact file-level split
     # ========================================================
 
     _, _, folds = (
         get_or_create_file_level_test_cv_splits(
 
-            project_root=
-                PROJECT_ROOT,
+            project_root=PROJECT_ROOT,
 
-            y=
-                y,
+            y=y,
 
-            file_ids=
-                file_ids,
+            file_ids=file_ids,
 
-            file_labels=
-                file_labels,
+            file_labels=file_labels,
 
-            shared_config=
-                shared_config,
+            shared_config=shared_config,
 
-            file_paths=
-                file_paths,
+            file_paths=file_paths,
         )
     )
+
 
     folds = folds[
         :args.folds
     ]
 
+
     print(
-        f"Model: {model_name}"
+        "========================================"
     )
 
     print(
-        f"Using {len(folds)} CV folds."
+        f"MODEL: {model_name}"
     )
 
     print(
-        f"Trials requested: {args.n_trials}"
+        f"TRIALS: {args.n_trials}"
     )
 
     print(
-        f"Max epochs per fold: {args.epochs}"
+        f"FOLDS: {len(folds)}"
+    )
+
+    print(
+        f"MAX EPOCHS: {args.epochs}"
+    )
+
+    print(
+        f"PATIENCE: {args.patience}"
+    )
+
+    print(
+        "========================================"
     )
 
 
@@ -806,58 +671,65 @@ def main():
     # Objective
     # ========================================================
 
-    def objective(
-        trial
-    ):
+    def objective(trial):
 
-        config = (
-            suggest_config(
-                trial,
-                model_name,
-                module,
-                args.epochs,
-                args.patience,
+        config = suggest_config(
+
+            trial=trial,
+
+            model_name=model_name,
+
+            module=module,
+
+            epochs=args.epochs,
+
+            patience=args.patience,
+        )
+
+
+        print(
+            "\n========================================"
+        )
+
+        print(
+            f"STARTING TRIAL {trial.number}"
+        )
+
+        print(
+            "========================================"
+        )
+
+
+        printable_config = {
+
+            key: (
+                list(value)
+                if isinstance(
+                    value,
+                    tuple,
+                )
+                else value
             )
-        )
 
-        print(
-            "\n"
-            "================================================"
-        )
+            for key, value
+            in config.items()
+        }
 
-        print(
-            f"Starting trial {trial.number}"
-        )
 
         print(
             json.dumps(
-                {
-                    key:
-                        (
-                            list(value)
-                            if isinstance(
-                                value,
-                                tuple,
-                            )
-                            else value
-                        )
-                    for key, value
-                    in config.items()
-                },
+                printable_config,
                 indent=2,
                 default=str,
             )
         )
 
-        print(
-            "================================================"
-        )
 
         fold_aucs = []
 
 
         # ====================================================
-        # CV folds
+        # Cross validation
         # ====================================================
 
         for fold_info in folds:
@@ -869,7 +741,20 @@ def main():
             )
 
 
-            # Clean previous model from memory
+            print(
+                "\n----------------------------------------"
+            )
+
+            print(
+                f"TRIAL {trial.number} | FOLD {fold}"
+            )
+
+            print(
+                "----------------------------------------"
+            )
+
+
+            # Clear old Keras model.
             K.clear_session()
 
             gc.collect()
@@ -895,98 +780,89 @@ def main():
 
 
             # =================================================
-            # Prepare model inputs
+            # Prepare data
+            #
+            # IMPORTANT:
+            # val_idx is deliberately used as the third
+            # temporary argument as well.
+            #
+            # Final test data is NOT used during HPO.
             # =================================================
 
-            train_inputs, \
-            val_inputs, \
-            _, \
-            extra_info = (
-                module.prepare_fold_inputs(
+            (
+                train_inputs,
+                val_inputs,
+                _,
+                extra_info,
+            ) = module.prepare_fold_inputs(
 
-                    X_model,
+                X_model,
 
-                    train_idx,
+                train_idx,
 
-                    val_idx,
+                val_idx,
 
-                    # Important:
-                    # validation is reused here.
-                    # Final test is not touched during HPO.
-                    val_idx,
+                val_idx,
 
-                    config,
+                config,
 
-                    Path("/tmp"),
+                Path("/tmp"),
 
-                    {},
-                )
+                {},
             )
 
 
             # =================================================
-            # Build model
+            # Model
             # =================================================
 
-            model = (
-                module.build_model(
-                    config,
-                    extra_info,
-                )
+            model = module.build_model(
+
+                config,
+
+                extra_info,
             )
 
 
-            y_train = (
-                np.eye(
-                    2,
-                    dtype=np.float32,
-                )[
-                    y[
-                        train_idx
-                    ]
-                ]
-            )
+            y_train = np.eye(
+                2,
+                dtype=np.float32,
+            )[y[train_idx]]
 
-            y_val = (
-                np.eye(
-                    2,
-                    dtype=np.float32,
-                )[
-                    y[
-                        val_idx
-                    ]
-                ]
-            )
+
+            y_val = np.eye(
+                2,
+                dtype=np.float32,
+            )[y[val_idx]]
 
 
             # =================================================
-            # Callbacks
+            # Early stopping
             # =================================================
 
-            early_stop = (
-                EarlyStopping(
+            early_stop = EarlyStopping(
 
-                    monitor=
-                        "val_loss",
+                monitor="val_loss",
 
-                    patience=
-                        args.patience,
+                patience=args.patience,
 
-                    min_delta=
-                        1e-4,
+                min_delta=1e-4,
 
-                    restore_best_weights=
-                        True,
+                restore_best_weights=True,
 
-                    verbose=
-                        1,
-                )
+                verbose=1,
             )
 
+
+            # =================================================
+            # Median pruning
+            # =================================================
 
             pruning_callback = (
                 OptunaPruningCallback(
+
                     trial,
+
                     fold,
                 )
             )
@@ -1007,58 +883,49 @@ def main():
                     y_val,
                 ),
 
-                epochs=
-                    config[
-                        "epochs"
-                    ],
+                epochs=config[
+                    "epochs"
+                ],
 
-                batch_size=
-                    config[
-                        "batch_size"
-                    ],
+                batch_size=config[
+                    "batch_size"
+                ],
 
                 callbacks=[
                     early_stop,
                     pruning_callback,
                 ],
 
-                verbose=
-                    2,
+                verbose=2,
             )
 
 
             # =================================================
-            # Validation prediction
+            # Validation predictions
             # =================================================
 
-            probs = (
-                model.predict(
+            probs = model.predict(
 
-                    val_inputs,
+                val_inputs,
 
-                    batch_size=
-                        config[
-                            "batch_size"
-                        ],
+                batch_size=config[
+                    "batch_size"
+                ],
 
-                    verbose=
-                        0,
-                )
+                verbose=0,
             )
 
 
-            auc = (
-                roc_auc_score(
+            auc = roc_auc_score(
 
-                    y[
-                        val_idx
-                    ],
+                y[
+                    val_idx
+                ],
 
-                    probs[
-                        :,
-                        1,
-                    ],
-                )
+                probs[
+                    :,
+                    1
+                ],
             )
 
 
@@ -1080,12 +947,12 @@ def main():
                 f"Trial {trial.number} | "
                 f"Fold {fold} | "
                 f"AUC={auc:.6f} | "
-                f"Running mean={mean_auc:.6f}"
+                f"Mean={mean_auc:.6f}"
             )
 
 
             # =================================================
-            # Additional pruning after complete fold
+            # Pruning after full fold
             # =================================================
 
             fold_step = (
@@ -1093,29 +960,37 @@ def main():
                 + fold
             )
 
+
             trial.report(
+
                 mean_auc,
+
                 step=fold_step,
             )
 
-            if (
-                trial.should_prune()
-            ):
 
-                raise (
-                    optuna
-                    .TrialPruned(
-                        f"Trial "
-                        f"{trial.number} "
-                        f"pruned after "
-                        f"fold {fold}"
-                    )
+            if trial.should_prune():
+
+                raise optuna.TrialPruned(
+
+                    f"Trial {trial.number} "
+                    f"pruned after fold "
+                    f"{fold}"
                 )
 
 
+            # Memory cleanup
+            del model
+
+            del train_inputs
+
+            del val_inputs
+
+            gc.collect()
+
+
         # ====================================================
-        # Final objective:
-        # mean validation AUC across folds
+        # Final trial score
         # ====================================================
 
         final_auc = float(
@@ -1124,101 +999,111 @@ def main():
             )
         )
 
+
+        auc_std = float(
+            np.std(
+                fold_aucs
+            )
+        )
+
+
         trial.set_user_attr(
             "fold_aucs",
             fold_aucs,
         )
 
+
         trial.set_user_attr(
             "auc_std",
-            float(
-                np.std(
-                    fold_aucs
-                )
-            ),
+            auc_std,
         )
+
+
+        print(
+            f"\nTrial {trial.number} finished"
+        )
+
+        print(
+            f"Mean AUC: {final_auc:.6f}"
+        )
+
+        print(
+            f"Std AUC: {auc_std:.6f}"
+        )
+
 
         return final_auc
 
 
     # ========================================================
-    # Output directory
+    # Output
     # ========================================================
 
     output_dir = (
+
         HPO_ROOT
+
         / model_name
     )
 
+
     output_dir.mkdir(
+
         parents=True,
+
         exist_ok=True,
     )
 
 
     # ========================================================
-    # Persistent Optuna storage
+    # Persistent database
     # ========================================================
 
     storage = (
+
         f"sqlite:///"
+
         f"{output_dir / 'study.db'}"
     )
 
 
     # ========================================================
-    # Optuna study
+    # Optuna
     # ========================================================
 
-    study = (
-        optuna.create_study(
+    study = optuna.create_study(
 
-            study_name=
-                f"pbpb_"
-                f"{model_name}_"
-                f"large_hpo",
+        study_name=(
+            f"pbpb_"
+            f"{model_name}_"
+            f"reduced_hpo"
+        ),
 
-            direction=
-                "maximize",
+        direction="maximize",
 
-            storage=
-                storage,
+        storage=storage,
 
-            load_if_exists=
-                True,
+        load_if_exists=True,
 
-            sampler=
-                optuna
-                .samplers
-                .TPESampler(
 
-                    seed=
-                        args.seed,
+        sampler=optuna.samplers.TPESampler(
 
-                    multivariate=
-                        True,
-                ),
+            seed=args.seed,
 
-            pruner=
-                optuna
-                .pruners
-                .MedianPruner(
+            multivariate=True,
+        ),
 
-                    # First 5 trials run
-                    # without pruning.
-                    n_startup_trials=
-                        5,
 
-                    # Give each new trial
-                    # a few epochs before
-                    # comparing it.
-                    n_warmup_steps=
-                        3,
+        pruner=optuna.pruners.MedianPruner(
 
-                    interval_steps=
-                        1,
-                ),
-        )
+            # First 5 trials establish baseline.
+            n_startup_trials=5,
+
+            # Do not prune immediately.
+            n_warmup_steps=3,
+
+            interval_steps=1,
+        ),
     )
 
 
@@ -1239,70 +1124,69 @@ def main():
 
 
     # ========================================================
-    # Optimize
+    # Optimization
     # ========================================================
 
     study.optimize(
 
         objective,
 
-        n_trials=
-            args.n_trials,
+        n_trials=args.n_trials,
 
-        gc_after_trial=
-            True,
+        gc_after_trial=True,
 
-        show_progress_bar=
-            False,
+        show_progress_bar=False,
     )
 
 
     # ========================================================
-    # Study statistics
+    # Statistics
     # ========================================================
 
     completed = [
+
         t
+
         for t in study.trials
+
         if (
             t.state
             ==
-            optuna
-            .trial
-            .TrialState
-            .COMPLETE
+            optuna.trial.TrialState.COMPLETE
         )
     ]
+
 
     pruned = [
+
         t
+
         for t in study.trials
+
         if (
             t.state
             ==
-            optuna
-            .trial
-            .TrialState
-            .PRUNED
+            optuna.trial.TrialState.PRUNED
         )
     ]
 
+
     failed = [
+
         t
+
         for t in study.trials
+
         if (
             t.state
             ==
-            optuna
-            .trial
-            .TrialState
-            .FAIL
+            optuna.trial.TrialState.FAIL
         )
     ]
 
 
     # ========================================================
-    # Best result
+    # Final result
     # ========================================================
 
     result = {
@@ -1320,12 +1204,16 @@ def main():
             study.best_trial.number,
 
         "best_trial_fold_aucs":
-            study.best_trial.user_attrs.get(
+            study.best_trial
+            .user_attrs
+            .get(
                 "fold_aucs"
             ),
 
         "best_trial_auc_std":
-            study.best_trial.user_attrs.get(
+            study.best_trial
+            .user_attrs
+            .get(
                 "auc_std"
             ),
 
@@ -1352,28 +1240,32 @@ def main():
 
 
     # ========================================================
-    # Save JSON
+    # Save best params
     # ========================================================
 
     with open(
+
         output_dir
         / "best_params.json",
 
         "w",
 
-        encoding=
-            "utf-8",
+        encoding="utf-8",
+
     ) as f:
 
         json.dump(
+
             result,
+
             f,
+
             indent=2,
         )
 
 
     # ========================================================
-    # Save all trials as CSV
+    # Save all trials
     # ========================================================
 
     trials_df = (
@@ -1381,22 +1273,22 @@ def main():
         .trials_dataframe()
     )
 
+
     trials_df.to_csv(
+
         output_dir
         / "all_trials.csv",
 
-        index=
-            False,
+        index=False,
     )
 
 
     # ========================================================
-    # Print result
+    # Print final result
     # ========================================================
 
     print(
-        "\n"
-        "================================================"
+        "\n========================================"
     )
 
     print(
@@ -1404,8 +1296,9 @@ def main():
     )
 
     print(
-        "================================================"
+        "========================================"
     )
+
 
     print(
         json.dumps(
