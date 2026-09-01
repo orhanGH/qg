@@ -254,7 +254,6 @@ def main():
     keras_model_names = {
     "efn",
     "mefn",
-    "aefn",
     "oefn",
     "aefn_before_phi",
     "aefn_before_sum",
