@@ -180,32 +180,40 @@ def apply_config_overrides(
     optimized_configs: dict,
     args,
 ) -> dict:
-    """
-    Config priority:
-
-    1. Model default config
-    2. Optimized config
-    3. Command-line/shared settings
-
-    This ensures that command-line arguments like --epochs 500
-    really override the default model config, for example "epochs": 10.
-    """
-
     if model_name in optimized_configs:
         print(f"Applying optimized config for {model_name}:")
         print(json.dumps(optimized_configs[model_name], indent=2))
         model_config.update(optimized_configs[model_name])
 
-    # Force shared/CLI values to override defaults and optimized configs.
     model_config["num_data"] = shared_config["num_data"]
     model_config["max_particles"] = shared_config["max_particles"]
     model_config["num_folds"] = shared_config["num_folds"]
     model_config["final_test_ratio"] = shared_config["final_test_ratio"]
     model_config["seed"] = shared_config["seed"]
+    model_config["epochs"] = shared_config["epochs"]
 
-    # Important fix:
-    # This makes --epochs 500 override model defaults like "epochs": 10.
-    model_config["epochs"] = args.epochs
+    # Shared training configuration for fair comparison.
+    model_config["batch_size"] = shared_config["batch_size"]
+    model_config["learning_rate"] = shared_config["learning_rate"]
+    model_config["weight_decay"] = shared_config["weight_decay"]
+    model_config["patience"] = shared_config["patience"]
+    model_config["use_early_stopping"] = shared_config["use_early_stopping"]
+    model_config["early_stopping_threshold"] = shared_config[
+        "early_stopping_threshold"
+    ]
+
+    # Shared architecture-independent choices where supported.
+    if "activation" in model_config:
+        model_config["activation"] = "silu"
+
+    if "latent_dropout" in model_config:
+        model_config["latent_dropout"] = 0.1
+
+    if "F_dropouts" in model_config:
+        model_config["F_dropouts"] = 0.1
+
+    if "dropout" in model_config:
+        model_config["dropout"] = 0.1
 
     print(f"Final config for {model_name}:")
     print(json.dumps(model_config, indent=2))
@@ -231,7 +239,7 @@ def main():
         # so command-line arguments can override optimized/default configs.
         "batch_size": 512,
         "epochs": args.epochs,
-        "learning_rate": 3e-4,
+        "learning_rate": 1e-4,
         "weight_decay": 1e-5,
         "use_early_stopping": True,
         "patience": 30,
