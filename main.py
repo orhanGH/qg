@@ -114,45 +114,6 @@ def load_optimized_configs(path):
     return optimized_configs
 
 
-def save_split_indices(project_root, dev_idx, final_test_idx, folds, shared_config):
-    splits_dir = project_root / "splits"
-    splits_dir.mkdir(parents=True, exist_ok=True)
-
-    num_data_name = "all" if shared_config["num_data"] <= 0 else str(shared_config["num_data"])
-
-    split_path = (
-        splits_dir
-        / (
-            f"marvin_parts_obsvs_{shared_config['class_0']}_vs_{shared_config['class_1']}"
-            f"_numdata_{num_data_name}_maxp_{shared_config['max_particles']}"
-        )
-        / (
-            f"seed_{shared_config['seed']}"
-            f"_folds_{shared_config['num_folds']}"
-            f"_test_{shared_config['final_test_ratio']}.npz"
-        )
-    )
-
-    split_path.parent.mkdir(parents=True, exist_ok=True)
-
-    save_dict = {
-        "dev_idx": dev_idx,
-        "final_test_idx": final_test_idx,
-    }
-
-    for fold_info in folds:
-        fold = fold_info["fold"]
-        save_dict[f"fold_{fold}_train_idx"] = fold_info["train_idx"]
-        save_dict[f"fold_{fold}_val_idx"] = fold_info["val_idx"]
-        save_dict[f"fold_{fold}_test_idx"] = fold_info["test_idx"]
-        save_dict[f"fold_{fold}_train_files"] = fold_info["train_files"]
-        save_dict[f"fold_{fold}_val_files"] = fold_info["val_files"]
-        save_dict[f"fold_{fold}_test_files"] = fold_info["test_files"]
-
-    np.savez(split_path, **save_dict)
-    print(f"Saved split indices to: {split_path}")
-
-
 def get_hf_runner_and_model(model_name):
     from runners.hf_runner import run_hf_experiment
 
@@ -214,9 +175,30 @@ def apply_config_overrides(
     model_config["num_folds"] = shared_config["num_folds"]
     model_config["final_test_ratio"] = shared_config["final_test_ratio"]
     model_config["seed"] = shared_config["seed"]
-    model_config["epochs"] = args.epochs
+    model_config["epochs"] = shared_config["epochs"]
+
+    # Shared training configuration for fair comparison.
+    model_config["batch_size"] = shared_config["batch_size"]
     model_config["learning_rate"] = shared_config["learning_rate"]
     model_config["weight_decay"] = shared_config["weight_decay"]
+    model_config["patience"] = shared_config["patience"]
+    model_config["use_early_stopping"] = shared_config["use_early_stopping"]
+    model_config["early_stopping_threshold"] = shared_config[
+        "early_stopping_threshold"
+    ]
+
+    # Shared architecture-independent choices where supported.
+    if "activation" in model_config:
+        model_config["activation"] = "silu"
+
+    if "latent_dropout" in model_config:
+        model_config["latent_dropout"] = 0.1
+
+    if "F_dropouts" in model_config:
+        model_config["F_dropouts"] = 0.1
+
+    if "dropout" in model_config:
+        model_config["dropout"] = 0.1
 
     print(f"Final config for {model_name}:")
     print(json.dumps(model_config, indent=2))
@@ -241,7 +223,7 @@ def main():
         "max_files_per_class": args.max_files_per_class,
         "batch_size": 512,
         "epochs": args.epochs,
-        "learning_rate": 1e-3,
+        "learning_rate": 1e-4,
         "weight_decay": 1e-4,
         "use_early_stopping": True,
         "patience": 30,
@@ -375,14 +357,6 @@ def main():
             f"val_files={len(fold_info['val_files'])}, "
             f"test_files={len(fold_info['test_files'])}"
         )
-
-    save_split_indices(
-        project_root=project_root,
-        dev_idx=dev_idx,
-        final_test_idx=final_test_idx,
-        folds=folds,
-        shared_config=shared_config,
-    )
 
     file_list_path = project_root / "splits" / "last_marvin_file_list.txt"
     file_list_path.parent.mkdir(parents=True, exist_ok=True)
