@@ -21,8 +21,11 @@ def parse_args():
     parser.add_argument(
         "--models",
         nargs="+",
-        default=["transformer_encoder", "mamba", "efn", "mefn", "aefn","aefn_before_phi_before_f","aefn_before_phi","aefn_before_f", "oefn"],
-        help="Models to run. Options: transformer_encoder mamba efn mefn aefn oefn.",
+        default=["efn"],
+        help=("Models to run: transformer_encoder, mamba, efn, mefn, oefn, "
+    "aefn_before_phi, aefn_before_sum, aefn_after_sum, "
+    "aefn_before_phi_before_sum, aefn_before_phi_after_sum, "
+    "aefn_before_sum_after_sum, aefn_all_three."),
     )
 
     parser.add_argument(
@@ -176,10 +179,18 @@ def get_keras_runner_and_model(model_name):
         from models.efn import oefn as model_module
     elif key == "aefn_before_phi":
         from models.efn import aefn_before_phi as model_module
-    elif key == "aefn_before_f":
-        from models.efn import aefn_before_F as model_module
-    elif key == "aefn_before_phi_before_f":
-        from models.efn import aefn_before_phi_before_F as model_module
+    elif key == "aefn_before_sum":
+        from models.efn import aefn_before_sum as model_module
+    elif key == "aefn_after_sum":
+        from models.efn import aefn_after_sum as model_module
+    elif key == "aefn_before_phi_before_sum":
+        from models.efn import aefn_before_phi_before_sum as model_module
+    elif key == "aefn_before_phi_after_sum":
+        from models.efn import aefn_before_phi_after_sum as model_module
+    elif key == "aefn_before_sum_after_sum":
+        from models.efn import aefn_before_sum_after_sum as model_module
+    elif key == "aefn_all_three":
+        from models.efn import aefn_all_three as model_module
     else:
         raise ValueError(f"Unknown Keras model: {model_name}")
 
@@ -246,8 +257,12 @@ def main():
     "aefn",
     "oefn",
     "aefn_before_phi",
-    "aefn_before_phi_before_f",
-    "aefn_before_f",
+    "aefn_before_sum",
+    "aefn_after_sum",
+    "aefn_before_phi_before_sum",
+    "aefn_before_phi_after_sum",
+    "aefn_before_sum_after_sum",
+    "aefn_all_three",
     }
     requested_models = [name.lower() for name in args.models]
     need_obsvs = "oefn" in requested_models
