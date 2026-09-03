@@ -28,7 +28,7 @@ DATA_ROOT = Path(
 
 HPO_ROOT = Path(
     "/lustre/scratch/data/s6oraydi_hpc-pbpb_pp/"
-    "s6oraydi_hpc_runs/hpo_reduced/oaefn_all_three"
+    "s6oraydi_hpc_runs/experiments/hyperparameter_search/oaefn_all_three"
 )
 
 
@@ -76,19 +76,19 @@ def parse_args():
     parser.add_argument(
         "--n-trials",
         type=int,
-        default=20,
+        default=10,
     )
 
     parser.add_argument(
         "--folds",
         type=int,
-        default=4,
+        default=1,
     )
 
     parser.add_argument(
         "--epochs",
         type=int,
-        default=200,
+        default=50,
     )
 
     parser.add_argument(
@@ -100,7 +100,7 @@ def parse_args():
     parser.add_argument(
         "--patience",
         type=int,
-        default=20,
+        default=10,
     )
 
     return parser.parse_args()
@@ -118,7 +118,7 @@ def suggest_config(
     )
 
     config["max_particles"] = 128
-    config["num_folds"] = 4
+    config["num_folds"] = 1
     config["final_test_ratio"] = 0.2
     config["seed"] = 42
 
@@ -133,15 +133,7 @@ def suggest_config(
 
     config["batch_size"] = 512
 
-    config["activation"] = (
-        trial.suggest_categorical(
-            "activation",
-            [
-                "gelu",
-                "silu",
-            ],
-        )
-    )
+    config["activation"] = "silu"
 
     config["learning_rate"] = (
         trial.suggest_categorical(
@@ -215,27 +207,9 @@ def suggest_config(
         ]
     )
 
-    config["latent_dropout"] = (
-        trial.suggest_categorical(
-            "latent_dropout",
-            [
-                0.0,
-                0.1,
-                0.2,
-            ],
-        )
-    )
+    config["latent_dropout"] = 0.1
 
-    config["F_dropouts"] = (
-        trial.suggest_categorical(
-            "F_dropouts",
-            [
-                0.0,
-                0.1,
-                0.2,
-            ],
-        )
-    )
+    config["F_dropouts"] = 0.1
 
     config["attention_dim"] = 128
 
@@ -302,7 +276,7 @@ def main():
         "seed": 42,
         "num_data": -1,
         "max_particles": 128,
-        "num_folds": 4,
+        "num_folds": 1,
         "final_test_ratio": 0.2,
 
         "class_0": "vac",
