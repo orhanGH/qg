@@ -191,14 +191,22 @@ def apply_config_overrides(
     if "activation" in model_config:
         model_config["activation"] = "silu"
 
-    if "latent_dropout" in model_config:
-        model_config["latent_dropout"] = 0.1
+    shared_dropout = 0.20
 
-    if "F_dropouts" in model_config:
-        model_config["F_dropouts"] = 0.1
+    dropout_keys = [
+        "dropout",
+        "latent_dropout",
+        "F_dropouts",
+        "F_dropout",
+        "phi_dropout",
+        "moment_dropout",
+        "obs_dropout",
+        "attention_dropout",
+    ]
 
-    if "dropout" in model_config:
-        model_config["dropout"] = 0.1
+    for key in dropout_keys:
+        if key in model_config:
+            model_config[key] = shared_dropout
 
     print(f"Final config for {model_name}:")
     print(json.dumps(model_config, indent=2))
@@ -223,10 +231,10 @@ def main():
         "max_files_per_class": args.max_files_per_class,
         "batch_size": 512,
         "epochs": args.epochs,
-        "learning_rate": 1e-4,
-        "weight_decay": 1e-4,
+        "learning_rate": 5e-5,
+        "weight_decay": 5e-4,
         "use_early_stopping": True,
-        "patience": 30,
+        "patience": 25,
         "early_stopping_threshold": 1e-4,
     }
 
