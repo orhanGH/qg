@@ -1,3 +1,4 @@
+from tf_keras.optimizers import AdamW
 import tensorflow as tf
 from tf_keras import Model
 from tf_keras.layers import (
@@ -356,7 +357,13 @@ def build_model(config: dict, extra_info: dict | None = None):
 
     model.compile(
         loss="categorical_crossentropy",
-        optimizer=Adam(learning_rate=config["learning_rate"]),
+        optimizer=AdamW(
+            learning_rate=config["learning_rate"],
+            weight_decay=config.get(
+                "weight_decay",
+                0.0,
+            ),
+        ),
         metrics=["accuracy"],
     )
     return model
