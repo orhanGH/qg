@@ -5,8 +5,15 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 
 from tf_keras.models import Model
-from tf_keras.layers import Input, Dense, TimeDistributed, Lambda, Concatenate, Dropout
-from tf_keras.optimizers import Adam
+from tf_keras.layers import (
+    Input,
+    Dense,
+    TimeDistributed,
+    Lambda,
+    Concatenate,
+    Dropout,
+)
+from tf_keras.optimizers import AdamW
 from tf_keras import backend as K
 
 
@@ -15,7 +22,8 @@ def get_default_config() -> dict:
         "model_name": "oefn",
         "results_dir_name": "oefn_results",
 
-        # Used only in fallback mode when no Marvin obsvs/x is passed.
+        # Used only in fallback mode when
+        # no Marvin obsvs/x is passed.
         "efp_degree": 3,
 
         # Marvin obsvs/x has 3472 features:
@@ -24,9 +32,7 @@ def get_default_config() -> dict:
         # efps  = 3389
         #
         # We remove eecs and use only:
-        # nsubs + efps = 60 + 3389 = 3449 features.
-        #
-        # We scale on train fold only and then apply PCA.
+        # nsubs + efps = 3449 features.
         "n_pca_components": 13,
         "remove_eecs": True,
         "nsubs_dim": 60,
@@ -55,14 +61,17 @@ def get_default_config() -> dict:
     }
 
 
-def compute_efp_observables(X: np.ndarray, config: dict) -> np.ndarray:
+def compute_efp_observables(
+    X: np.ndarray,
+    config: dict,
+) -> np.ndarray:
     """
     Fallback only.
 
-    This is kept for old experiments where X is passed as a particle array.
-    For the Marvin dataset, do not use this. Marvin observables are already
-    stored in obsvs/x and are passed through X["obsvs"].
+    For Marvin, precomputed observables
+    are used from X["obsvs"].
     """
+
     efpset = ef.EFPSet(
         f"d<={config['efp_degree']}",
         measure="hadr",
@@ -75,149 +84,237 @@ def compute_efp_observables(X: np.ndarray, config: dict) -> np.ndarray:
     return efpset.batch_compute(X)
 
 
-def remove_eecs_from_observables(X_obs: np.ndarray, config: dict) -> np.ndarray:
-    """
-    Remove energy-energy correlation features from Marvin observables.
+def remove_eecs_from_observables(
+    X_obs: np.ndarray,
+    config: dict,
+) -> np.ndarray:
 
-    Marvin obsvs/x is assumed to be:
-
-        concat(nsubs, eecs, efps)
-
-    Shapes:
-        nsubs = 60
-        eecs  = 23
-        efps  = 3389
-
-    After removal:
-        concat(nsubs, efps)
-    """
-
-    if not config.get("remove_eecs", False):
+    if not config.get(
+        "remove_eecs",
+        False,
+    ):
         return X_obs
 
-    nsubs_dim = config.get("nsubs_dim", 60)
-    eecs_dim = config.get("eecs_dim", 23)
+    nsubs_dim = config.get(
+        "nsubs_dim",
+        60,
+    )
+
+    eecs_dim = config.get(
+        "eecs_dim",
+        23,
+    )
 
     eecs_start = nsubs_dim
-    eecs_end = nsubs_dim + eecs_dim
+    eecs_end = (
+        nsubs_dim
+        + eecs_dim
+    )
 
     if eecs_end > X_obs.shape[1]:
         raise ValueError(
             f"EEC slice is outside observable matrix. "
-            f"nsubs_dim={nsubs_dim}, eecs_dim={eecs_dim}, "
-            f"but X_obs has only {X_obs.shape[1]} columns."
+            f"nsubs_dim={nsubs_dim}, "
+            f"eecs_dim={eecs_dim}, "
+            f"but X_obs has only "
+            f"{X_obs.shape[1]} columns."
         )
 
     X_obs_without_eecs = np.concatenate(
         [
-            X_obs[:, :eecs_start],  # keep nsubs
-            X_obs[:, eecs_end:],    # keep efps
+            X_obs[:, :eecs_start],
+            X_obs[:, eecs_end:],
         ],
         axis=1,
     )
 
-    print("Removed eecs from oEFN observables.")
-    print("Now using only nsubs + efps.")
-    print("EEC column range removed:", eecs_start, "to", eecs_end)
-    print("Observable matrix shape before EEC removal:", X_obs.shape)
-    print("Observable matrix shape after EEC removal:", X_obs_without_eecs.shape)
+    print(
+        "Removed eecs from oEFN observables."
+    )
+    print(
+        "Now using only nsubs + efps."
+    )
+    print(
+        "EEC column range removed:",
+        eecs_start,
+        "to",
+        eecs_end,
+    )
+    print(
+        "Observable matrix shape before "
+        "EEC removal:",
+        X_obs.shape,
+    )
+    print(
+        "Observable matrix shape after "
+        "EEC removal:",
+        X_obs_without_eecs.shape,
+    )
 
     return X_obs_without_eecs
 
 
-def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, context):
-    """
-    Prepare oEFN fold inputs.
-
-    Marvin mode:
-        X is a dict:
-            X["parts"] -> shape (N_jets, max_particles, 3)
-            X["obsvs"] -> shape (N_jets, 3472)
-
-        X["parts"][..., 0] = z
-        X["parts"][..., 1] = delta_eta
-        X["parts"][..., 2] = delta_phi
-
-        X["obsvs"] = concat(nsubs, eecs, efps)
-
-        In this version:
-            eecs are removed.
-            Only nsubs + efps are used.
-
-    Fallback mode:
-        X is a normal particle array.
-        Then EFP observables are computed on the fly.
-    """
+def prepare_fold_inputs(
+    X,
+    train_idx,
+    val_idx,
+    test_idx,
+    config,
+    fold_dir,
+    context,
+):
 
     if isinstance(X, dict):
         if "parts" not in X:
-            raise KeyError("oEFN expected X['parts'], but key 'parts' is missing.")
+            raise KeyError(
+                "oEFN expected X['parts'], "
+                "but key 'parts' is missing."
+            )
 
         if "obsvs" not in X:
-            raise KeyError("oEFN expected X['obsvs'], but key 'obsvs' is missing.")
+            raise KeyError(
+                "oEFN expected X['obsvs'], "
+                "but key 'obsvs' is missing."
+            )
 
         X_parts = X["parts"]
         X_obs = X["obsvs"]
 
-        print("Using precomputed Marvin observables from obsvs/x for oEFN.")
-        print("Particle tensor shape:", X_parts.shape)
-        print("Observable matrix shape before filtering:", X_obs.shape)
+        print(
+            "Using precomputed Marvin observables "
+            "from obsvs/x for oEFN."
+        )
+        print(
+            "Particle tensor shape:",
+            X_parts.shape,
+        )
+        print(
+            "Observable matrix shape before filtering:",
+            X_obs.shape,
+        )
 
-        X_obs = remove_eecs_from_observables(X_obs, config)
+        X_obs = remove_eecs_from_observables(
+            X_obs,
+            config,
+        )
 
     else:
         X_parts = X
 
         if "X_obs" not in context:
-            print("Computing EFP observables for oEFN fallback mode...")
-            context["X_obs"] = compute_efp_observables(X_parts, config)
-            print("Observable matrix shape:", context["X_obs"].shape)
+            print(
+                "Computing EFP observables "
+                "for oEFN fallback mode..."
+            )
+
+            context["X_obs"] = (
+                compute_efp_observables(
+                    X_parts,
+                    config,
+                )
+            )
+
+            print(
+                "Observable matrix shape:",
+                context["X_obs"].shape,
+            )
 
         X_obs = context["X_obs"]
 
     if X_parts.ndim != 3:
         raise ValueError(
-            f"Expected X_parts to have shape (N, max_particles, features), "
+            "Expected X_parts to have shape "
+            "(N, max_particles, features), "
             f"got shape {X_parts.shape}."
         )
 
     if X_parts.shape[-1] < 3:
         raise ValueError(
-            f"Expected X_parts last dimension to contain at least "
-            f"[z, delta_eta, delta_phi], got shape {X_parts.shape}."
+            "Expected X_parts last dimension "
+            "to contain at least "
+            "[z, delta_eta, delta_phi], "
+            f"got shape {X_parts.shape}."
         )
 
     if X_obs.ndim != 2:
         raise ValueError(
-            f"Expected X_obs to have shape (N, num_observables), "
+            "Expected X_obs to have shape "
+            "(N, num_observables), "
             f"got shape {X_obs.shape}."
         )
 
     if X_parts.shape[0] != X_obs.shape[0]:
         raise ValueError(
-            f"X_parts and X_obs have different number of jets: "
-            f"{X_parts.shape[0]} vs {X_obs.shape[0]}."
+            "X_parts and X_obs have different "
+            "number of jets: "
+            f"{X_parts.shape[0]} vs "
+            f"{X_obs.shape[0]}."
         )
 
-    z_train = X_parts[train_idx, :, 0]
-    p_train = X_parts[train_idx, :, 1:3]
-    obs_train_raw = X_obs[train_idx]
+    z_train = X_parts[
+        train_idx,
+        :,
+        0,
+    ]
+    p_train = X_parts[
+        train_idx,
+        :,
+        1:3,
+    ]
+    obs_train_raw = X_obs[
+        train_idx
+    ]
 
-    z_val = X_parts[val_idx, :, 0]
-    p_val = X_parts[val_idx, :, 1:3]
-    obs_val_raw = X_obs[val_idx]
+    z_val = X_parts[
+        val_idx,
+        :,
+        0,
+    ]
+    p_val = X_parts[
+        val_idx,
+        :,
+        1:3,
+    ]
+    obs_val_raw = X_obs[
+        val_idx
+    ]
 
-    z_test = X_parts[test_idx, :, 0]
-    p_test = X_parts[test_idx, :, 1:3]
-    obs_test_raw = X_obs[test_idx]
+    z_test = X_parts[
+        test_idx,
+        :,
+        0,
+    ]
+    p_test = X_parts[
+        test_idx,
+        :,
+        1:3,
+    ]
+    obs_test_raw = X_obs[
+        test_idx
+    ]
 
-    # Fit scaler only on the training fold.
+    # Scale only on training fold
     scaler = StandardScaler()
-    obs_train_scaled = scaler.fit_transform(obs_train_raw)
-    obs_val_scaled = scaler.transform(obs_val_raw)
-    obs_test_scaled = scaler.transform(obs_test_raw)
 
-    # Fit PCA only on the training fold.
+    obs_train_scaled = (
+        scaler.fit_transform(
+            obs_train_raw
+        )
+    )
+
+    obs_val_scaled = (
+        scaler.transform(
+            obs_val_raw
+        )
+    )
+
+    obs_test_scaled = (
+        scaler.transform(
+            obs_test_raw
+        )
+    )
+
+    # PCA only on training fold
     max_components = min(
         config["n_pca_components"],
         obs_train_scaled.shape[0],
@@ -229,13 +326,35 @@ def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, conte
         random_state=config["seed"],
     )
 
-    obs_train = pca.fit_transform(obs_train_scaled)
-    obs_val = pca.transform(obs_val_scaled)
-    obs_test = pca.transform(obs_test_scaled)
+    obs_train = pca.fit_transform(
+        obs_train_scaled
+    )
 
-    train_inputs = [z_train, p_train, obs_train]
-    val_inputs = [z_val, p_val, obs_val]
-    test_inputs = [z_test, p_test, obs_test]
+    obs_val = pca.transform(
+        obs_val_scaled
+    )
+
+    obs_test = pca.transform(
+        obs_test_scaled
+    )
+
+    train_inputs = [
+        z_train,
+        p_train,
+        obs_train,
+    ]
+
+    val_inputs = [
+        z_val,
+        p_val,
+        obs_val,
+    ]
+
+    test_inputs = [
+        z_test,
+        p_test,
+        obs_test,
+    ]
 
     observable_source = (
         "marvin_obsvs_x_without_eecs"
@@ -244,109 +363,187 @@ def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, conte
     )
 
     extra_info = {
-        "num_particles": X_parts.shape[1],
-        "raw_num_observables": X_obs.shape[1],
-        "num_observables": obs_train.shape[1],
-        "observable_source": observable_source,
-        "efp_degree": config.get("efp_degree"),
-        "n_pca_components": config["n_pca_components"],
-        "obs_latent_dim": config.get("obs_latent_dim", 64),
-        "remove_eecs": config.get("remove_eecs", False),
-        "nsubs_dim": config.get("nsubs_dim", 60),
-        "eecs_dim": config.get("eecs_dim", 23),
+        "num_particles":
+            X_parts.shape[1],
+
+        "raw_num_observables":
+            X_obs.shape[1],
+
+        "num_observables":
+            obs_train.shape[1],
+
+        "observable_source":
+            observable_source,
+
+        "efp_degree":
+            config.get("efp_degree"),
+
+        "n_pca_components":
+            config["n_pca_components"],
+
+        "obs_latent_dim":
+            config.get(
+                "obs_latent_dim",
+                64,
+            ),
+
+        "remove_eecs":
+            config.get(
+                "remove_eecs",
+                False,
+            ),
+
+        "nsubs_dim":
+            config.get(
+                "nsubs_dim",
+                60,
+            ),
+
+        "eecs_dim":
+            config.get(
+                "eecs_dim",
+                23,
+            ),
     }
 
-    return train_inputs, val_inputs, test_inputs, extra_info
+    return (
+        train_inputs,
+        val_inputs,
+        test_inputs,
+        extra_info,
+    )
 
 
-def build_model(config: dict, extra_info: dict | None = None):
-    """
-    oEFN architecture:
-
-        particle branch:
-            z, p -> Phi(p) -> sum_i z_i Phi(p_i) -> latent_summary
-
-        observable branch:
-            obsvs/x -> remove eecs -> StandardScaler -> PCA
-            -> Dense projection -> obs_latent
-
-        classifier:
-            concat(latent_summary, obs_latent) -> F network -> softmax
-    """
+def build_model(
+    config: dict,
+    extra_info: dict | None = None,
+):
 
     if extra_info is None:
-        raise ValueError("oEFN build_model requires extra_info from prepare_fold_inputs.")
+        raise ValueError(
+            "oEFN build_model requires "
+            "extra_info from prepare_fold_inputs."
+        )
 
-    num_particles = extra_info["num_particles"]
-    num_observables = extra_info["num_observables"]
+    num_particles = extra_info[
+        "num_particles"
+    ]
 
-    activation = config.get("activation", "relu")
+    num_observables = extra_info[
+        "num_observables"
+    ]
 
-    input_z = Input(shape=(num_particles,), name="input_z")
-    input_p = Input(shape=(num_particles, 2), name="input_p")
-    input_obs = Input(shape=(num_observables,), name="input_obs")
+    activation = config.get(
+        "activation",
+        "relu",
+    )
 
-    # -------------------------------------------------------------------------
-    # Particle / EFN branch
-    # -------------------------------------------------------------------------
+    input_z = Input(
+        shape=(num_particles,),
+        name="input_z",
+    )
+
+    input_p = Input(
+        shape=(num_particles, 2),
+        name="input_p",
+    )
+
+    input_obs = Input(
+        shape=(num_observables,),
+        name="input_obs",
+    )
+
+    # Particle branch
     phi = input_p
 
-    for i, units in enumerate(config["Phi_sizes"]):
+    for i, units in enumerate(
+        config["Phi_sizes"]
+    ):
         phi = TimeDistributed(
-            Dense(units, activation=activation),
+            Dense(
+                units,
+                activation=activation,
+            ),
             name=f"phi_dense_{i + 1}",
         )(phi)
 
         phi = Dropout(
-            config.get("phi_dropout", 0.0),
+            config.get(
+                "phi_dropout",
+                0.0,
+            ),
             name=f"phi_dropout_{i + 1}",
         )(phi)
 
     z_expanded = Lambda(
-        lambda x: K.expand_dims(x, axis=-1),
+        lambda x:
+            K.expand_dims(
+                x,
+                axis=-1,
+            ),
         name="expand_z",
     )(input_z)
 
     weighted_phi = Lambda(
-        lambda tensors: tensors[0] * tensors[1],
+        lambda tensors:
+            tensors[0] * tensors[1],
         name="energy_weighted_phi",
-    )([z_expanded, phi])
+    )(
+        [
+            z_expanded,
+            phi,
+        ]
+    )
 
     latent_summary = Lambda(
-        lambda x: K.sum(x, axis=1),
+        lambda x:
+            K.sum(
+                x,
+                axis=1,
+            ),
         name="latent_summary",
     )(weighted_phi)
 
     latent_summary = Dropout(
-        config.get("latent_dropout", 0.0),
+        config.get(
+            "latent_dropout",
+            0.0,
+        ),
         name="latent_dropout",
     )(latent_summary)
 
-    # -------------------------------------------------------------------------
     # Observable branch
-    # -------------------------------------------------------------------------
     obs_latent = Dense(
-        config.get("obs_latent_dim", 64),
+        config.get(
+            "obs_latent_dim",
+            64,
+        ),
         activation=activation,
         name="observable_projection",
     )(input_obs)
 
     obs_latent = Dropout(
-        config.get("obs_dropout", 0.0),
+        config.get(
+            "obs_dropout",
+            0.0,
+        ),
         name="observable_dropout",
     )(obs_latent)
 
-    # -------------------------------------------------------------------------
-    # Merge branches
-    # -------------------------------------------------------------------------
-    x = Concatenate(name="latent_plus_observables")(
-        [latent_summary, obs_latent]
+    # Merge
+    x = Concatenate(
+        name="latent_plus_observables"
+    )(
+        [
+            latent_summary,
+            obs_latent,
+        ]
     )
 
-    # -------------------------------------------------------------------------
-    # Classifier F
-    # -------------------------------------------------------------------------
-    for i, units in enumerate(config["F_sizes"]):
+    # F network
+    for i, units in enumerate(
+        config["F_sizes"]
+    ):
         x = Dense(
             units,
             activation=activation,
@@ -354,20 +551,39 @@ def build_model(config: dict, extra_info: dict | None = None):
         )(x)
 
         x = Dropout(
-            config.get("F_dropout", 0.0),
+            config.get(
+                "F_dropout",
+                0.0,
+            ),
             name=f"F_dropout_{i + 1}",
         )(x)
 
-    output = Dense(2, activation="softmax", name="output")(x)
+    output = Dense(
+        2,
+        activation="softmax",
+        name="output",
+    )(x)
 
     model = Model(
-        inputs=[input_z, input_p, input_obs],
+        inputs=[
+            input_z,
+            input_p,
+            input_obs,
+        ],
         outputs=output,
         name="oefn",
     )
 
     model.compile(
-        optimizer=Adam(learning_rate=config["learning_rate"]),
+        optimizer=AdamW(
+            learning_rate=config[
+                "learning_rate"
+            ],
+            weight_decay=config.get(
+                "weight_decay",
+                0.0,
+            ),
+        ),
         loss="categorical_crossentropy",
         metrics=["accuracy"],
     )
@@ -375,19 +591,73 @@ def build_model(config: dict, extra_info: dict | None = None):
     return model
 
 
-def get_model_summary_fields(config: dict) -> dict:
+def get_model_summary_fields(
+    config: dict,
+) -> dict:
     return {
-        "efp_degree": config.get("efp_degree"),
-        "n_pca_components": config["n_pca_components"],
-        "obs_latent_dim": config.get("obs_latent_dim", 64),
-        "obs_dropout": config.get("obs_dropout", 0.0),
-        "remove_eecs": config.get("remove_eecs", False),
-        "nsubs_dim": config.get("nsubs_dim", 60),
-        "eecs_dim": config.get("eecs_dim", 23),
-        "Phi_sizes": str(config["Phi_sizes"]),
-        "F_sizes": str(config["F_sizes"]),
-        "activation": config.get("activation", "relu"),
-        "phi_dropout": config.get("phi_dropout", 0.0),
-        "latent_dropout": config.get("latent_dropout", 0.0),
-        "F_dropout": config.get("F_dropout", 0.0),
+        "efp_degree":
+            config.get("efp_degree"),
+
+        "n_pca_components":
+            config["n_pca_components"],
+
+        "obs_latent_dim":
+            config.get(
+                "obs_latent_dim",
+                64,
+            ),
+
+        "obs_dropout":
+            config.get(
+                "obs_dropout",
+                0.0,
+            ),
+
+        "remove_eecs":
+            config.get(
+                "remove_eecs",
+                False,
+            ),
+
+        "nsubs_dim":
+            config.get(
+                "nsubs_dim",
+                60,
+            ),
+
+        "eecs_dim":
+            config.get(
+                "eecs_dim",
+                23,
+            ),
+
+        "Phi_sizes":
+            str(config["Phi_sizes"]),
+
+        "F_sizes":
+            str(config["F_sizes"]),
+
+        "activation":
+            config.get(
+                "activation",
+                "relu",
+            ),
+
+        "phi_dropout":
+            config.get(
+                "phi_dropout",
+                0.0,
+            ),
+
+        "latent_dropout":
+            config.get(
+                "latent_dropout",
+                0.0,
+            ),
+
+        "F_dropout":
+            config.get(
+                "F_dropout",
+                0.0,
+            ),
     }
