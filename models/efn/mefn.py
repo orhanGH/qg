@@ -49,7 +49,15 @@ def get_default_config() -> dict:
     }
 
 
-def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, context):
+def prepare_fold_inputs(
+    X,
+    train_idx,
+    val_idx,
+    test_idx,
+    config,
+    fold_dir,
+    context,
+):
     """
     MEFN input:
 
@@ -79,7 +87,12 @@ def prepare_fold_inputs(X, train_idx, val_idx, test_idx, config, fold_dir, conte
         "num_particles": X.shape[1],
     }
 
-    return train_inputs, val_inputs, test_inputs, extra_info
+    return (
+        train_inputs,
+        val_inputs,
+        test_inputs,
+        extra_info,
+    )
 
 
 class RecursiveMomentPooling(Layer):
@@ -96,111 +109,171 @@ class RecursiveMomentPooling(Layer):
     order k is built from order k-1.
     """
 
-    def __init__(self, latent_dim: int, moment_order: int, **kwargs):
+    def __init__(
+        self,
+        latent_dim: int,
+        moment_order: int,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
+
         self.latent_dim = int(latent_dim)
         self.moment_order = int(moment_order)
 
     def call(self, inputs):
         phi, z = inputs
 
-        # z: (batch, particles) -> (batch, particles, 1)
         if len(z.shape) == 2:
-            z = tf.expand_dims(z, axis=-1)
+            z = tf.expand_dims(
+                z,
+                axis=-1,
+            )
 
         moment_features = []
 
-        # ---------------------------------------------------
-        # Order 1:
-        # M_a = sum_i z_i * Phi_a(p_i)
-        # ---------------------------------------------------
+        # Order 1
         previous_terms = phi
-        previous_combos = [(a,) for a in range(self.latent_dim)]
+        previous_combos = [
+            (a,)
+            for a in range(self.latent_dim)
+        ]
 
-        moment_1 = tf.reduce_sum(previous_terms * z, axis=1)
+        moment_1 = tf.reduce_sum(
+            previous_terms * z,
+            axis=1,
+        )
+
         moment_features.append(moment_1)
 
-        # ---------------------------------------------------
-        # Higher orders:
-        # Build order k products from order k-1 products.
-        # ---------------------------------------------------
-        for order in range(2, self.moment_order + 1):
+        # Higher orders
+        for order in range(
+            2,
+            self.moment_order + 1,
+        ):
             current_terms_parts = []
             current_combos = []
 
-            for combo_idx, combo in enumerate(previous_combos):
-                # To avoid duplicate symmetric products, only append
-                # channels >= last channel.
+            for combo_idx, combo in enumerate(
+                previous_combos
+            ):
                 start_channel = combo[-1]
 
-                # previous product term:
-                # shape = (batch, particles, 1)
-                base = previous_terms[:, :, combo_idx:combo_idx + 1]
+                base = previous_terms[
+                    :,
+                    :,
+                    combo_idx:combo_idx + 1,
+                ]
 
-                # allowed next Phi channels:
-                # shape = (batch, particles, latent_dim - start_channel)
-                phi_tail = phi[:, :, start_channel:]
+                phi_tail = phi[
+                    :,
+                    :,
+                    start_channel:,
+                ]
 
-                # recursive product:
-                # Phi_a1 * ... * Phi_a{k-1} * Phi_b
                 new_terms = base * phi_tail
-                current_terms_parts.append(new_terms)
 
-                for new_channel in range(start_channel, self.latent_dim):
-                    current_combos.append(combo + (new_channel,))
+                current_terms_parts.append(
+                    new_terms
+                )
 
-            # shape:
-            # (batch, particles, number_of_order_k_combinations)
-            current_terms = tf.concat(current_terms_parts, axis=-1)
+                for new_channel in range(
+                    start_channel,
+                    self.latent_dim,
+                ):
+                    current_combos.append(
+                        combo + (new_channel,)
+                    )
 
-            # M_{a1...ak} =
-            # sum_i z_i * product_j Phi_aj(p_i)
-            current_moment = tf.reduce_sum(current_terms * z, axis=1)
-            moment_features.append(current_moment)
+            current_terms = tf.concat(
+                current_terms_parts,
+                axis=-1,
+            )
+
+            current_moment = tf.reduce_sum(
+                current_terms * z,
+                axis=1,
+            )
+
+            moment_features.append(
+                current_moment
+            )
 
             previous_terms = current_terms
             previous_combos = current_combos
 
-        return tf.concat(moment_features, axis=-1)
+        return tf.concat(
+            moment_features,
+            axis=-1,
+        )
 
-    def compute_output_shape(self, input_shape):
+    def compute_output_shape(
+        self,
+        input_shape,
+    ):
         batch_size = input_shape[0][0]
 
         feature_dim = sum(
-            comb(self.latent_dim + k - 1, k)
-            for k in range(1, self.moment_order + 1)
+            comb(
+                self.latent_dim + k - 1,
+                k,
+            )
+            for k in range(
+                1,
+                self.moment_order + 1,
+            )
         )
 
-        return (batch_size, feature_dim)
+        return (
+            batch_size,
+            feature_dim,
+        )
 
     def get_config(self):
         config = super().get_config()
+
         config.update(
             {
                 "latent_dim": self.latent_dim,
                 "moment_order": self.moment_order,
             }
         )
+
         return config
 
 
 def build_optimizer(config: dict):
-    learning_rate = config.get("learning_rate", 3e-4)
-    weight_decay = config.get("weight_decay", 0.0)
-    clipnorm = config.get("clipnorm", None)
+    learning_rate = config.get(
+        "learning_rate",
+        3e-4,
+    )
+
+    weight_decay = config.get(
+        "weight_decay",
+        0.0,
+    )
+
+    clipnorm = config.get(
+        "clipnorm",
+        None,
+    )
 
     if weight_decay > 0:
         if AdamW is None:
             print(
                 "WARNING: AdamW is not available. "
-                "Falling back to Adam without decoupled weight decay."
+                "Falling back to Adam without "
+                "decoupled weight decay."
             )
+
             return Adam(
                 learning_rate=learning_rate,
                 clipnorm=clipnorm,
             )
 
-        print(f"Using AdamW with weight_decay={weight_decay}")
+        print(
+            f"Using AdamW with "
+            f"weight_decay={weight_decay}"
+        )
 
         return AdamW(
             learning_rate=learning_rate,
@@ -208,7 +281,9 @@ def build_optimizer(config: dict):
             clipnorm=clipnorm,
         )
 
-    print("Using Adam without weight decay")
+    print(
+        "Using Adam without weight decay"
+    )
 
     return Adam(
         learning_rate=learning_rate,
@@ -216,7 +291,10 @@ def build_optimizer(config: dict):
     )
 
 
-def build_model(config: dict, extra_info: dict | None = None):
+def build_model(
+    config: dict,
+    extra_info: dict | None = None,
+):
     """
     Moment Energy Flow Network.
 
@@ -235,42 +313,78 @@ def build_model(config: dict, extra_info: dict | None = None):
         else config["max_particles"]
     )
 
-    input_dim = config.get("input_dim", 2)
-    output_dim = config.get("output_dim", 2)
+    input_dim = config.get(
+        "input_dim",
+        2,
+    )
 
-    latent_dim = config.get("latent_dim", 16)
-    moment_order = config.get("moment_order", 3)
+    output_dim = config.get(
+        "output_dim",
+        2,
+    )
 
-    Phi_sizes = config.get("Phi_sizes", (100, 100, 128))
-    F_sizes = config.get("F_sizes", (100, 100, 100))
+    latent_dim = config.get(
+        "latent_dim",
+        16,
+    )
 
-    activation = config.get("activation", "gelu")
+    moment_order = config.get(
+        "moment_order",
+        3,
+    )
 
-    phi_dropout = config.get("phi_dropout", 0.1)
-    moment_dropout = config.get("moment_dropout", 0.1)
+    Phi_sizes = config.get(
+        "Phi_sizes",
+        (100, 100, 128),
+    )
 
-    # Support both naming styles.
-    F_dropout = config.get("F_dropout", config.get("F_dropouts", 0.1))
+    F_sizes = config.get(
+        "F_sizes",
+        (100, 100, 100),
+    )
 
-    # -------------------------------------------------------
-    # Inputs
-    # -------------------------------------------------------
+    activation = config.get(
+        "activation",
+        "gelu",
+    )
+
+    phi_dropout = config.get(
+        "phi_dropout",
+        0.1,
+    )
+
+    moment_dropout = config.get(
+        "moment_dropout",
+        0.1,
+    )
+
+    F_dropout = config.get(
+        "F_dropout",
+        config.get(
+            "F_dropouts",
+            0.1,
+        ),
+    )
+
     input_z = Input(
         shape=(num_particles,),
         name="input_z",
     )
 
     input_p = Input(
-        shape=(num_particles, input_dim),
+        shape=(
+            num_particles,
+            input_dim,
+        ),
         name="input_p",
     )
 
-    # -------------------------------------------------------
     # Phi network
-    # -------------------------------------------------------
     phi = input_p
 
-    for i, units in enumerate(Phi_sizes):
+    for i, units in enumerate(
+        Phi_sizes
+    ):
         phi = TimeDistributed(
             Dense(
                 units,
@@ -285,12 +399,7 @@ def build_model(config: dict, extra_info: dict | None = None):
                 name=f"phi_dropout_{i + 1}",
             )(phi)
 
-    # -------------------------------------------------------
-    # Project Phi to latent_dim channels
-    # -------------------------------------------------------
-    # Important:
-    # activation=None keeps the final latent moment channels
-    # less constrained before products are computed.
+    # Project Phi
     phi = TimeDistributed(
         Dense(
             latent_dim,
@@ -305,14 +414,17 @@ def build_model(config: dict, extra_info: dict | None = None):
             name="phi_output_dropout",
         )(phi)
 
-    # -------------------------------------------------------
-    # Recursive Moment Pooling
-    # -------------------------------------------------------
+    # Moment pooling
     x = RecursiveMomentPooling(
         latent_dim=latent_dim,
         moment_order=moment_order,
         name="recursive_moment_pooling",
-    )([phi, input_z])
+    )(
+        [
+            phi,
+            input_z,
+        ]
+    )
 
     if moment_dropout > 0:
         x = Dropout(
@@ -320,10 +432,10 @@ def build_model(config: dict, extra_info: dict | None = None):
             name="moment_dropout",
         )(x)
 
-    # -------------------------------------------------------
-    # F classifier network
-    # -------------------------------------------------------
-    for i, units in enumerate(F_sizes):
+    # F network
+    for i, units in enumerate(
+        F_sizes
+    ):
         x = Dense(
             units,
             activation=activation,
@@ -343,12 +455,17 @@ def build_model(config: dict, extra_info: dict | None = None):
     )(x)
 
     model = Model(
-        inputs=[input_z, input_p],
+        inputs=[
+            input_z,
+            input_p,
+        ],
         outputs=output,
         name="mefn",
     )
 
-    optimizer = build_optimizer(config)
+    optimizer = build_optimizer(
+        config
+    )
 
     model.compile(
         optimizer=optimizer,
@@ -359,32 +476,98 @@ def build_model(config: dict, extra_info: dict | None = None):
     return model
 
 
-def get_model_summary_fields(config: dict) -> dict:
+def get_model_summary_fields(
+    config: dict,
+) -> dict:
     return {
-        "model_name": config.get("model_name", "mefn"),
-        "results_dir_name": config.get("results_dir_name", "mefn_results"),
+        "model_name": config.get(
+            "model_name",
+            "mefn",
+        ),
+        "results_dir_name": config.get(
+            "results_dir_name",
+            "mefn_results",
+        ),
 
-        "input_dim": config.get("input_dim", 2),
-        "output_dim": config.get("output_dim", 2),
+        "input_dim": config.get(
+            "input_dim",
+            2,
+        ),
+        "output_dim": config.get(
+            "output_dim",
+            2,
+        ),
 
-        "latent_dim": config.get("latent_dim", 16),
-        "moment_order": config.get("moment_order", 3),
+        "latent_dim": config.get(
+            "latent_dim",
+            16,
+        ),
+        "moment_order": config.get(
+            "moment_order",
+            3,
+        ),
 
-        "Phi_sizes": str(config.get("Phi_sizes", (100, 100, 128))),
-        "F_sizes": str(config.get("F_sizes", (100, 100, 100))),
-        "activation": config.get("activation", "gelu"),
+        "Phi_sizes": str(
+            config.get(
+                "Phi_sizes",
+                (100, 100, 128),
+            )
+        ),
+        "F_sizes": str(
+            config.get(
+                "F_sizes",
+                (100, 100, 100),
+            )
+        ),
+        "activation": config.get(
+            "activation",
+            "gelu",
+        ),
 
-        "phi_dropout": config.get("phi_dropout", 0.1),
-        "moment_dropout": config.get("moment_dropout", 0.1),
-        "F_dropout": config.get("F_dropout", config.get("F_dropouts", 0.1)),
+        "phi_dropout": config.get(
+            "phi_dropout",
+            0.1,
+        ),
+        "moment_dropout": config.get(
+            "moment_dropout",
+            0.1,
+        ),
+        "F_dropout": config.get(
+            "F_dropout",
+            config.get(
+                "F_dropouts",
+                0.1,
+            ),
+        ),
 
-        "batch_size": config.get("batch_size", 512),
-        "epochs": config.get("epochs", 200),
-        "patience": config.get("patience", 30),
-        "learning_rate": config.get("learning_rate", 3e-4),
-        "weight_decay": config.get("weight_decay", 0.0),
-        "clipnorm": config.get("clipnorm", None),
-        "use_early_stopping": config.get("use_early_stopping", True),
+        "batch_size": config.get(
+            "batch_size",
+            512,
+        ),
+        "epochs": config.get(
+            "epochs",
+            200,
+        ),
+        "patience": config.get(
+            "patience",
+            30,
+        ),
+        "learning_rate": config.get(
+            "learning_rate",
+            3e-4,
+        ),
+        "weight_decay": config.get(
+            "weight_decay",
+            0.0,
+        ),
+        "clipnorm": config.get(
+            "clipnorm",
+            None,
+        ),
+        "use_early_stopping": config.get(
+            "use_early_stopping",
+            True,
+        ),
         "early_stopping_threshold": config.get(
             "early_stopping_threshold",
             1e-4,
