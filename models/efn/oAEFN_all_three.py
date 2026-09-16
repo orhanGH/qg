@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-
+from tf_keras.optimizers import AdamW
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 
@@ -730,10 +730,14 @@ def build_model(
 
     model.compile(
         loss="categorical_crossentropy",
-        optimizer=Adam(
+        optimizer=AdamW(
             learning_rate=config[
                 "learning_rate"
-            ]
+            ],
+            weight_decay=config.get(
+                "weight_decay",
+                0.0,
+            ),
         ),
         metrics=["accuracy"],
     )
