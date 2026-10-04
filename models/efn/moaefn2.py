@@ -1,6 +1,6 @@
-"""MOEFN: M1..M7 with all three AEFN attention positions.
+"""MOAEFN: M1..M7 with all three AEFN attention positions.
 
-Place this file in qg/models/efn/moefn.py on branch pbpb_vs_pp.
+Place this file in qg/models/efn/moaefn.py on branch pbpb_vs_pp.
 It implements the same four hooks as the existing Keras models. Because
 main.py does not yet register moefn, it can also be run directly:
 
